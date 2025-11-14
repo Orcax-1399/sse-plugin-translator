@@ -17,6 +17,156 @@ export interface PluginInfo {
 }
 
 /**
+ * 翻译记录
+ */
+export interface Translation {
+  /** form标识符 (如: "00012BB7|Skyrim.esm") */
+  form_id: string;
+  /** 记录类型 (如: "WEAP", "ARMO") */
+  record_type: string;
+  /** 子记录类型 (如: "FULL", "DESC") */
+  subrecord_type: string;
+  /** 编辑器ID (可选) */
+  editor_id: string | null;
+  /** 原文 */
+  original_text: string;
+  /** 译文 */
+  translated_text: string;
+  /** 来源插件名称 */
+  plugin_name: string | null;
+  /** 创建时间戳 */
+  created_at: number;
+  /** 更新时间戳 */
+  updated_at: number;
+}
+
+/**
+ * Form标识符，用于批量查询
+ */
+export interface FormIdentifier {
+  /** form标识符 */
+  form_id: string;
+  /** 记录类型 */
+  record_type: string;
+  /** 子记录类型 */
+  subrecord_type: string;
+}
+
+/**
+ * 插件统计信息
+ */
+export interface PluginCount {
+  /** 插件名称 */
+  plugin_name: string;
+  /** 翻译数量 */
+  count: number;
+}
+
+/**
+ * 翻译统计信息
+ */
+export interface TranslationStats {
+  /** 总翻译数量 */
+  total_count: number;
+  /** 按插件分组的统计 */
+  plugin_counts: PluginCount[];
+  /** 最后更新时间戳 */
+  last_updated: number;
+}
+
+/**
+ * ESP 字典提取统计信息
+ */
+export interface ExtractionStats {
+  /** 总文件数 */
+  total_files: number;
+  /** 成功提取的文件数 */
+  successful_files: number;
+  /** 失败的文件数 */
+  failed_files: number;
+  /** 提取的总字符串数 */
+  total_strings: number;
+  /** 跳过的文件列表（未找到） */
+  skipped_files: string[];
+  /** 错误信息列表 */
+  errors: string[];
+}
+
+/**
+ * 字符串记录（用于表格显示）
+ */
+export interface StringRecord {
+  /** form标识符 (完整, 如: "00012BB7|Skyrim.esm") */
+  form_id: string;
+  /** 编辑器ID (可选) */
+  editor_id: string | null;
+  /** 记录类型 (如: "WEAP") */
+  record_type: string;
+  /** 子记录类型 (如: "FULL") */
+  subrecord_type: string;
+  /** 原文 */
+  original_text: string;
+  /** 译文（可编辑） */
+  translated_text: string;
+}
+
+/**
+ * 加载插件返回的完整响应
+ */
+export interface PluginStringsResponse {
+  /** Session ID (即插件名称) */
+  session_id: string;
+  /** 插件名称 */
+  plugin_name: string;
+  /** 插件路径 */
+  plugin_path: string;
+  /** 字符串列表 */
+  strings: StringRecord[];
+  /** 总数 */
+  total_count: number;
+}
+
+/**
+ * Session 信息
+ */
+export interface SessionInfo {
+  /** Session ID */
+  session_id: string;
+  /** 插件名称 */
+  plugin_name: string;
+  /** 字符串数量 */
+  string_count: number;
+  /** 加载时间（秒） */
+  loaded_at: number;
+}
+
+/**
+ * Session 状态
+ */
+export interface SessionState {
+  /** 已打开的 Sessions (Map: session_id -> PluginStringsResponse) */
+  openedSessions: Map<string, PluginStringsResponse>;
+  /** 当前激活的 Session ID */
+  activeSessionId: string | null;
+  /** 加载状态 */
+  isLoading: boolean;
+  /** 错误信息 */
+  error: string | null;
+
+  // Actions
+  /** 打开插件 Session */
+  openSession: (pluginPath: string) => Promise<void>;
+  /** 关闭插件 Session */
+  closeSession: (sessionId: string) => Promise<void>;
+  /** 切换激活的 Session */
+  switchSession: (sessionId: string) => void;
+  /** 检查 Session 是否已存在 */
+  checkSessionExists: (pluginName: string) => boolean;
+  /** 设置错误信息 */
+  setError: (error: string | null) => void;
+}
+
+/**
  * 应用状态
  */
 export interface AppState {

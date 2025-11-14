@@ -19,6 +19,10 @@ import {
 import MenuIcon from '@mui/icons-material/Menu';
 import SettingsIcon from '@mui/icons-material/Settings';
 import { useAppStore } from '../stores/appStore';
+import { useSessionStore } from '../stores/sessionStore';
+import SettingsModal from '../components/SettingsModal';
+import SessionTabBar from '../components/SessionTabBar';
+import SessionPanel from '../components/SessionPanel';
 import type { PluginInfo } from '../types';
 
 const DRAWER_WIDTH = 300;
@@ -37,9 +41,17 @@ export default function Workspace() {
     loadSettings,
   } = useAppStore();
 
+  const {
+    openedSessions,
+    activeSessionId,
+    openSession,
+    switchSession,
+    checkSessionExists,
+  } = useSessionStore();
+
   const [drawerOpen, setDrawerOpen] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedPlugin, setSelectedPlugin] = useState<PluginInfo | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // 加载配置和插件列表
   useEffect(() => {
@@ -62,14 +74,29 @@ export default function Workspace() {
     setDrawerOpen(!drawerOpen);
   };
 
-  const handleResetGamePath = () => {
-    if (confirm('确定要重新选择游戏目录吗？')) {
-      navigate('/');
+  const handleOpenSettings = () => {
+    setSettingsOpen(true);
+  };
+
+  const handleCloseSettings = () => {
+    setSettingsOpen(false);
+  };
+
+  // 处理插件点击：检查是否已打开，已打开则切换，未打开则新建
+  const handlePluginClick = (plugin: PluginInfo) => {
+    const pluginName = plugin.name;
+
+    if (checkSessionExists(pluginName)) {
+      // 已打开，切换到该 Session
+      switchSession(pluginName);
+    } else {
+      // 未打开，创建新 Session
+      openSession(plugin.path);
     }
   };
 
   return (
-    <Box sx={{ display: 'flex', height: '100vh' }}>
+    <Box sx={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
       {/* 顶部工具栏 */}
       <AppBar
         position="fixed"
@@ -95,11 +122,14 @@ export default function Workspace() {
             {gamePath}
           </Typography>
 
-          <IconButton color="inherit" onClick={handleResetGamePath}>
+          <IconButton color="inherit" onClick={handleOpenSettings}>
             <SettingsIcon />
           </IconButton>
         </Toolbar>
       </AppBar>
+
+      {/* 设置模态框 */}
+      <SettingsModal open={settingsOpen} onClose={handleCloseSettings} />
 
       {/* 左侧插件列表 */}
       <Drawer
@@ -107,8 +137,13 @@ export default function Workspace() {
         anchor="left"
         open={drawerOpen}
         sx={{
-          width: DRAWER_WIDTH,
+          width: drawerOpen ? DRAWER_WIDTH : 0,
           flexShrink: 0,
+          transition: (theme) =>
+            theme.transitions.create('width', {
+              easing: theme.transitions.easing.sharp,
+              duration: theme.transitions.duration.leavingScreen,
+            }),
           '& .MuiDrawer-paper': {
             width: DRAWER_WIDTH,
             boxSizing: 'border-box',
@@ -152,8 +187,8 @@ export default function Workspace() {
               {filteredPlugins.map((plugin) => (
                 <ListItem key={plugin.path} disablePadding>
                   <ListItemButton
-                    selected={selectedPlugin?.path === plugin.path}
-                    onClick={() => setSelectedPlugin(plugin)}
+                    selected={checkSessionExists(plugin.name)}
+                    onClick={() => handlePluginClick(plugin)}
                   >
                     <ListItemText
                       primary={plugin.name}
@@ -183,41 +218,44 @@ export default function Workspace() {
         component="main"
         sx={{
           flexGrow: 1,
-          p: 3,
-          ml: drawerOpen ? 0 : `-${DRAWER_WIDTH}px`,
+          width: drawerOpen ? `calc(100vw - ${DRAWER_WIDTH}px)` : '100vw',
           transition: (theme) =>
-            theme.transitions.create('margin', {
+            theme.transitions.create('width', {
               easing: theme.transitions.easing.sharp,
               duration: theme.transitions.duration.leavingScreen,
             }),
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100vh',
+          overflow: 'hidden',
         }}
       >
         <Toolbar />
 
-        <Box
-          sx={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            height: 'calc(100vh - 100px)',
-          }}
-        >
-          {selectedPlugin ? (
-            <Box>
-              <Typography variant="h5" gutterBottom>
-                {selectedPlugin.name}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                路径: {selectedPlugin.path}
-              </Typography>
-              <Typography variant="body1" sx={{ mt: 3 }} color="text.secondary">
-                翻译功能待实现...
+        {/* Session TabBar + Panel */}
+        <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {openedSessions.size > 0 ? (
+            <>
+              <SessionTabBar />
+              {activeSessionId && openedSessions.get(activeSessionId) && (
+                <Box sx={{ flexGrow: 1, overflow: 'hidden' }}>
+                  <SessionPanel sessionData={openedSessions.get(activeSessionId)!} />
+                </Box>
+              )}
+            </>
+          ) : (
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                height: '100%',
+              }}
+            >
+              <Typography variant="h6" color="text.secondary">
+                请从左侧选择一个插件开始翻译
               </Typography>
             </Box>
-          ) : (
-            <Typography variant="h6" color="text.secondary">
-              请从左侧选择一个插件开始翻译
-            </Typography>
           )}
         </Box>
       </Box>

@@ -1,0 +1,5 @@
+# 忽略数据库文件变化，避免触发自动重建
+userdata/
+*.db
+*.db-shm
+*.db-wal
