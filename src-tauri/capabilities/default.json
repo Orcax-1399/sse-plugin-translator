@@ -5,6 +5,9 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:event:allow-listen",
+    "core:event:allow-emit",
+    "core:window:allow-create",
     "opener:default",
     "dialog:default",
     "dialog:allow-open"

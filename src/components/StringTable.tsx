@@ -1,19 +1,25 @@
-import { useMemo } from 'react';
-import { DataGrid, GridColDef } from '@mui/x-data-grid';
+import { useMemo, memo } from 'react';
+import { DataGrid, GridColDef, GridRowParams } from '@mui/x-data-grid';
 import { Box } from '@mui/material';
+import { invoke } from '@tauri-apps/api/core';
 import type { StringRecord } from '../types';
+import { showError } from '../stores/notificationStore';
 
 interface StringTableProps {
   /** 字符串记录列表 */
   rows: StringRecord[];
+  /** Session ID，用作 DataGrid 的 key，强制在 session 切换时重新挂载 */
+  sessionId?: string;
 }
 
 /**
  * 字符串表格组件
  *
  * 显示插件的字符串数据，支持列宽调整和虚拟滚动
+ *
+ * ✅ 使用 React.memo 包装，避免不必要的重渲染
  */
-export default function StringTable({ rows }: StringTableProps) {
+const StringTable = memo(function StringTable({ rows, sessionId }: StringTableProps) {
   // 定义列（按需求顺序）
   const columns: GridColDef[] = [
     {
@@ -62,6 +68,22 @@ export default function StringTable({ rows }: StringTableProps) {
     }));
   }, [rows]);
 
+  // 双击行打开编辑窗口
+  const handleRowDoubleClick = (params: GridRowParams) => {
+    const record = params.row as StringRecord;
+
+    console.log('→ 双击行，准备打开编辑窗口');
+
+    // ✅ Fire-and-forget: 不等待也不处理结果
+    // 这样即使后端阻塞也不会影响主窗口
+    invoke('open_editor_window', { record }).catch((error) => {
+      console.error('打开编辑窗口失败:', error);
+      showError('打开编辑窗口失败: ' + String(error));
+    });
+
+    console.log('→ 调用已发出，不等待返回');
+  };
+
   return (
     <Box
       sx={{
@@ -70,6 +92,7 @@ export default function StringTable({ rows }: StringTableProps) {
       }}
     >
       <DataGrid
+        key={sessionId} // ✅ 强制在 session 切换时重新挂载，确保旧缓存释放
         rows={rowsWithId}
         columns={columns}
         initialState={{
@@ -79,6 +102,7 @@ export default function StringTable({ rows }: StringTableProps) {
         }}
         pageSizeOptions={[25, 50, 100]}
         disableRowSelectionOnClick
+        onRowDoubleClick={handleRowDoubleClick}
         getRowClassName={(params) => {
           const row = params.row as StringRecord;
           switch (row.translation_status) {
@@ -121,4 +145,6 @@ export default function StringTable({ rows }: StringTableProps) {
       />
     </Box>
   );
-}
+});
+
+export default StringTable;

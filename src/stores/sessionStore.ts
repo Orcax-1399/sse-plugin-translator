@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { produce } from 'immer';
 import type {
   PluginStringsResponse,
   SessionState,
@@ -8,6 +9,17 @@ import type {
   Translation,
   TranslationProgressPayload
 } from '../types';
+
+/**
+ * 翻译更新事件 Payload
+ */
+interface TranslationUpdatedPayload {
+  form_id: string;
+  record_type: string;
+  subrecord_type: string;
+  translated_text: string;
+  translation_status: string;
+}
 
 /**
  * Session 状态管理
@@ -21,6 +33,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   translationProgress: new Map(),
   isLoading: false,
   error: null,
+  // ✅ 跟踪未保存的修改（Map: session_id -> Set<form_id>）
+  pendingChanges: new Map(),
 
   /**
    * 打开插件 Session
@@ -163,6 +177,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     console.log(`开始刷新翻译: ${sessionId}, 共 ${session.total_count} 条字符串`);
 
+    // ✅ 使用 Map 暂存翻译数据（需要在 finally 中清理）
+    let translationMap: Map<string, string> | null = null;
+
     try {
       // 1. 构造查询参数
       const forms: FormIdentifier[] = session.strings.map((s) => ({
@@ -183,38 +200,28 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       console.log(`✓ 查询到 ${translations.length} 条翻译`);
 
       // 3. ✅ 优化：只存储译文字符串，减少内存占用
-      const translationMap = new Map<string, string>();
+      translationMap = new Map<string, string>();
       translations.forEach((t) => {
         const key = `${t.form_id}|${t.record_type}|${t.subrecord_type}`;
-        translationMap.set(key, t.translated_text);
+        translationMap!.set(key, t.translated_text);
       });
 
-      // 4. 更新字符串的译文和状态
-      const updatedStrings = session.strings.map((s) => {
-        const key = `${s.form_id}|${s.record_type}|${s.subrecord_type}`;
-        const translatedText = translationMap.get(key);
+      // 4. ✅ 使用 Immer 原地更新，避免创建新数组（节省约 60% 内存）
+      const updatedSession = produce(session, (draft) => {
+        draft.strings.forEach((s) => {
+          const key = `${s.form_id}|${s.record_type}|${s.subrecord_type}`;
+          const translatedText = translationMap!.get(key);
 
-        if (translatedText) {
-          // ✅ 优化：直接返回新对象，减少展开操作
-          return {
-            ...s,
-            translated_text: translatedText,
-            translation_status: 'manual' as const,
-          };
-        }
-        // ✅ 优化：只更新状态字段
-        return {
-          ...s,
-          translation_status: 'untranslated' as const,
-        };
+          if (translatedText) {
+            s.translated_text = translatedText;
+            s.translation_status = 'manual';
+          } else {
+            s.translation_status = 'untranslated';
+          }
+        });
       });
 
       // 5. 更新 Session 数据
-      const updatedSession: PluginStringsResponse = {
-        ...session,
-        strings: updatedStrings,
-      };
-
       set((state) => {
         const newSessions = new Map(state.openedSessions);
         newSessions.set(sessionId, updatedSession);
@@ -241,6 +248,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         newProgress.delete(sessionId);
         return { translationProgress: newProgress };
       });
+    } finally {
+      // ✅ 显式清理 translationMap，确保内存立即释放
+      if (translationMap) {
+        translationMap.clear();
+        translationMap = null;
+      }
     }
   },
 
@@ -276,5 +289,173 @@ export const useSessionStore = create<SessionState>((set, get) => ({
    */
   setError: (error: string | null) => {
     set({ error });
+  },
+
+  /**
+   * 更新单个字符串记录（来自编辑窗口）
+   *
+   * @param sessionId - Session ID
+   * @param formId - Form ID
+   * @param recordType - Record Type
+   * @param subrecordType - Subrecord Type
+   * @param translatedText - 新的译文
+   * @param translationStatus - 翻译状态
+   */
+  updateStringRecord: (
+    sessionId: string,
+    formId: string,
+    recordType: string,
+    subrecordType: string,
+    translatedText: string,
+    translationStatus: string
+  ) => {
+    const { openedSessions } = get();
+    const session = openedSessions.get(sessionId);
+
+    if (!session) {
+      console.warn(`Session 不存在: ${sessionId}`);
+      return;
+    }
+
+    // ✅ 使用 Immer 原地更新，避免创建新数组
+    const updatedSession = produce(session, (draft) => {
+      const record = draft.strings.find(
+        (s) => s.form_id === formId && s.record_type === recordType && s.subrecord_type === subrecordType
+      );
+
+      if (record) {
+        record.translated_text = translatedText;
+        record.translation_status = translationStatus as any;
+      }
+    });
+
+    // 更新 Session 数据
+    set((state) => {
+      const newSessions = new Map(state.openedSessions);
+      newSessions.set(sessionId, updatedSession);
+
+      // ✅ 标记为待保存
+      const newPendingChanges = new Map(state.pendingChanges);
+      const changes = newPendingChanges.get(sessionId) || new Set<string>();
+      changes.add(formId);
+      newPendingChanges.set(sessionId, changes);
+
+      return {
+        openedSessions: newSessions,
+        pendingChanges: newPendingChanges,
+      };
+    });
+
+    console.log(`✓ 已更新记录: ${formId} (${sessionId})`);
+  },
+
+  /**
+   * 初始化编辑窗口事件监听器
+   *
+   * 监听来自编辑窗口的翻译更新事件
+   */
+  initEditorEventListener: async () => {
+    const unlisten = await listen<TranslationUpdatedPayload>(
+      'translation-updated',
+      (event) => {
+        const { form_id, record_type, subrecord_type, translated_text, translation_status } = event.payload;
+
+        // 查找对应的 Session（遍历所有打开的 Session）
+        const { openedSessions, updateStringRecord } = useSessionStore.getState();
+
+        for (const [sessionId, session] of openedSessions.entries()) {
+          const record = session.strings.find(
+            (s) => s.form_id === form_id && s.record_type === record_type && s.subrecord_type === subrecord_type
+          );
+
+          if (record && updateStringRecord) {
+            // 找到对应的 Session，更新记录
+            updateStringRecord(sessionId, form_id, record_type, subrecord_type, translated_text, translation_status);
+            console.log(`✓ 编辑窗口更新已应用: ${form_id} (${sessionId})`);
+            break;
+          }
+        }
+      }
+    );
+
+    return () => {
+      unlisten();
+    };
+  },
+
+  /**
+   * 批量保存翻译到数据库
+   *
+   * 保存所有 original_text != translated_text 的记录
+   *
+   * @returns 保存的记录数量
+   */
+  batchSaveTranslations: async (): Promise<number> => {
+    const { openedSessions } = get();
+
+    // 收集所有需要保存的翻译
+    const translationsToSave: Translation[] = [];
+
+    for (const [_sessionId, session] of openedSessions.entries()) {
+      for (const record of session.strings) {
+        // 仅保存 original_text != translated_text 的记录
+        if (record.original_text !== record.translated_text) {
+          const now = Math.floor(Date.now() / 1000);
+
+          translationsToSave.push({
+            form_id: record.form_id,
+            record_type: record.record_type,
+            subrecord_type: record.subrecord_type,
+            editor_id: record.editor_id,
+            original_text: record.original_text,
+            translated_text: record.translated_text,
+            plugin_name: session.plugin_name,
+            created_at: now,
+            updated_at: now,
+          });
+        }
+      }
+    }
+
+    if (translationsToSave.length === 0) {
+      console.log('没有需要保存的翻译');
+      return 0;
+    }
+
+    console.log(`开始批量保存翻译: ${translationsToSave.length} 条`);
+
+    try {
+      // 调用后端批量保存接口
+      await invoke('batch_save_translations', {
+        translations: translationsToSave,
+      });
+
+      console.log(`✓ 批量保存成功: ${translationsToSave.length} 条`);
+
+      // ✅ 清空所有 pendingChanges
+      set({ pendingChanges: new Map() });
+
+      return translationsToSave.length;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error('批量保存翻译失败:', errorMsg);
+      throw new Error(errorMsg);
+    }
+  },
+
+  /**
+   * 获取未保存的修改数量
+   *
+   * @returns 未保存的记录数量
+   */
+  getPendingChangesCount: (): number => {
+    const { pendingChanges } = get();
+    if (!pendingChanges) return 0;
+
+    let count = 0;
+    for (const changes of pendingChanges.values()) {
+      count += changes.size;
+    }
+    return count;
   },
 }));

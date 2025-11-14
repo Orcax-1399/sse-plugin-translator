@@ -15,15 +15,19 @@ import {
   Divider,
   CircularProgress,
   Alert,
+  Button,
+  Badge,
 } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import SettingsIcon from '@mui/icons-material/Settings';
+import SaveIcon from '@mui/icons-material/Save';
 import { useAppStore } from '../stores/appStore';
 import { useSessionStore } from '../stores/sessionStore';
 import SettingsModal from '../components/SettingsModal';
 import SessionTabBar from '../components/SessionTabBar';
 import SessionPanel from '../components/SessionPanel';
 import type { PluginInfo } from '../types';
+import { showSuccess, showError } from '../stores/notificationStore';
 
 const DRAWER_WIDTH = 300;
 
@@ -48,11 +52,18 @@ export default function Workspace() {
     switchSession,
     checkSessionExists,
     initEventListener,
+    initEditorEventListener,
+    batchSaveTranslations,
+    getPendingChangesCount,
   } = useSessionStore();
 
   const [drawerOpen, setDrawerOpen] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  // 获取未保存的修改数量
+  const pendingCount = getPendingChangesCount ? getPendingChangesCount() : 0;
 
   // 加载配置和插件列表
   useEffect(() => {
@@ -82,6 +93,23 @@ export default function Workspace() {
       }
     };
   }, [initEventListener]);
+
+  // 初始化编辑窗口事件监听器（监听翻译更新）
+  useEffect(() => {
+    let cleanup: (() => void) | null = null;
+
+    if (initEditorEventListener) {
+      initEditorEventListener().then((unlistenFn) => {
+        cleanup = unlistenFn;
+      });
+    }
+
+    return () => {
+      if (cleanup) {
+        cleanup();
+      }
+    };
+  }, [initEditorEventListener]);
 
   // 过滤插件列表
   const filteredPlugins = plugins.filter((plugin) =>
@@ -113,6 +141,29 @@ export default function Workspace() {
     }
   };
 
+  // 保存所有翻译到数据库
+  const handleSaveTranslations = async () => {
+    if (!batchSaveTranslations) {
+      showError('批量保存功能不可用');
+      return;
+    }
+
+    setIsSaving(true);
+
+    try {
+      const savedCount = await batchSaveTranslations();
+      if (savedCount > 0) {
+        showSuccess(`成功保存 ${savedCount} 条翻译到数据库`);
+      } else {
+        showSuccess('没有需要保存的翻译');
+      }
+    } catch (error) {
+      showError('保存翻译失败: ' + String(error));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <Box sx={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
       {/* 顶部工具栏 */}
@@ -139,6 +190,19 @@ export default function Workspace() {
           <Typography variant="body2" sx={{ mr: 2, opacity: 0.8 }}>
             {gamePath}
           </Typography>
+
+          <Badge badgeContent={pendingCount} color="error" sx={{ mr: 2 }}>
+            <Button
+              variant="contained"
+              color="secondary"
+              startIcon={<SaveIcon />}
+              onClick={handleSaveTranslations}
+              disabled={isSaving || openedSessions.size === 0}
+              size="small"
+            >
+              {isSaving ? '保存中...' : '保存翻译'}
+            </Button>
+          </Badge>
 
           <IconButton color="inherit" onClick={handleOpenSettings}>
             <SettingsIcon />

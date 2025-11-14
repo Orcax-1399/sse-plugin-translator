@@ -84,7 +84,7 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
 
       {/* 表格区域（占满剩余空间） */}
       <Box sx={{ flex: 1, overflow: 'hidden' }}>
-        <StringTable rows={sessionData.strings} />
+        <StringTable rows={sessionData.strings} sessionId={sessionData.session_id} />
       </Box>
     </Box>
   );

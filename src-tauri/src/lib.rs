@@ -8,10 +8,11 @@ use settings::{Settings, read_settings, write_settings};
 use scanner::{PluginInfo, validate_game_path, scan_plugins};
 use translation_db::{TranslationDB, Translation, FormIdentifier, TranslationStats};
 use esp_service::{ExtractionStats, get_base_plugins, extract_base_dictionary};
-use plugin_session::{PluginSessionManager, PluginStringsResponse, SessionInfo};
+use plugin_session::{PluginSessionManager, PluginStringsResponse, SessionInfo, StringRecord};
 use std::sync::Mutex;
+use std::collections::HashMap;
 use serde::Serialize;
-use tauri::Emitter;
+use tauri::{Emitter, WebviewUrl, WebviewWindowBuilder};
 
 /// 翻译进度通知 Payload
 #[derive(Debug, Clone, Serialize)]
@@ -234,6 +235,124 @@ fn extract_dictionary(
     Ok(stats)
 }
 
+// ==================== 编辑窗口相关命令 ====================
+
+/// 打开编辑窗口
+#[tauri::command]
+async fn open_editor_window(
+    app: tauri::AppHandle,
+    editor_data_store: tauri::State<'_, Mutex<HashMap<String, StringRecord>>>,
+    record: StringRecord,
+) -> Result<String, String> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    // 生成唯一的窗口标签（使用时间戳）
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let window_label = format!("editor-{}", timestamp);
+
+    println!("→ 准备创建编辑窗口: {}", window_label);
+    println!("  form_id: {}", record.form_id);
+
+    // ✅ 先存储数据
+    {
+        match editor_data_store.lock() {
+            Ok(mut store) => {
+                store.insert(window_label.clone(), record.clone());
+                println!("  ✓ 数据已存储到内存");
+            }
+            Err(e) => {
+                println!("  ❌ 锁定数据存储失败: {}", e);
+                return Err(format!("锁定数据存储失败: {}", e));
+            }
+        }
+    }
+
+    println!("  → 开始异步创建窗口...");
+
+    // ✅ 直接在异步上下文中创建窗口
+    let builder = WebviewWindowBuilder::new(
+        &app,
+        &window_label,
+        WebviewUrl::App("/editor".into()),
+    )
+    .title("编辑翻译")
+    .inner_size(900.0, 600.0)
+    .resizable(true)
+    .center();
+
+    // ✅ 使用 ? 操作符，但立即返回，不阻塞
+    match builder.build() {
+        Ok(_) => {
+            println!("  ✓ 编辑窗口创建成功: {}", window_label);
+            Ok(window_label)
+        }
+        Err(e) => {
+            println!("  ❌ 编辑窗口创建失败: {}", e);
+
+            // 清理已存储的数据
+            if let Ok(mut store) = editor_data_store.lock() {
+                store.remove(&window_label);
+            }
+
+            Err(format!("创建编辑窗口失败: {}", e))
+        }
+    }
+}
+
+/// 获取编辑窗口数据（前端准备好后调用）
+#[tauri::command]
+fn get_editor_data(
+    window_label: String,
+    editor_data_store: tauri::State<Mutex<HashMap<String, StringRecord>>>,
+) -> Result<StringRecord, String> {
+    println!("→ 前端请求编辑数据: {}", window_label);
+
+    let record = {
+        match editor_data_store.lock() {
+            Ok(mut store) => {
+                println!("  ✓ 成功锁定数据存储");
+                println!("  当前存储的窗口数: {}", store.len());
+
+                // 取出数据并移除（避免内存泄漏）
+                match store.remove(&window_label) {
+                    Some(rec) => {
+                        println!("  ✓ 找到数据 (form_id: {})", rec.form_id);
+                        Ok(rec)
+                    }
+                    None => {
+                        println!("  ❌ 未找到窗口数据");
+                        println!("  可用的窗口标签: {:?}", store.keys().collect::<Vec<_>>());
+                        Err(format!("未找到窗口数据: {}", window_label))
+                    }
+                }
+            }
+            Err(e) => {
+                println!("  ❌ 锁定数据存储失败: {}", e);
+                Err(format!("锁定数据存储失败: {}", e))
+            }
+        }
+    }?;
+
+    println!("✓ 编辑数据已返回: {}", window_label);
+
+    Ok(record)
+}
+
+/// 查询单词翻译（用于编辑器参考）
+#[tauri::command]
+fn query_word_translations(
+    db: tauri::State<Mutex<TranslationDB>>,
+    text: String,
+    limit: usize,
+) -> Result<Vec<Translation>, String> {
+    let db = db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+    db.query_by_text(&text, limit)
+        .map_err(|e| format!("查询单词翻译失败: {}", e))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 初始化翻译数据库
@@ -244,11 +363,15 @@ pub fn run() {
     // 初始化插件 Session 管理器
     let session_manager = PluginSessionManager::new();
 
+    // 初始化编辑窗口数据存储（用于窗口间数据传递）
+    let editor_data_store: Mutex<HashMap<String, StringRecord>> = Mutex::new(HashMap::new());
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(Mutex::new(translation_db))
         .manage(Mutex::new(session_manager))
+        .manage(editor_data_store)
         .invoke_handler(tauri::generate_handler![
             get_settings,
             set_game_path,
@@ -266,7 +389,10 @@ pub fn run() {
             close_plugin_session,
             list_plugin_sessions,
             get_base_plugins_list,
-            extract_dictionary
+            extract_dictionary,
+            open_editor_window,
+            get_editor_data,
+            query_word_translations
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

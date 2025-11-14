@@ -171,6 +171,8 @@ export interface SessionState {
   activeSessionId: string | null;
   /** 翻译刷新进度 (Map: session_id -> 百分比 0-100) */
   translationProgress: Map<string, number>;
+  /** 未保存的修改 (Map: session_id -> Set<form_id>) */
+  pendingChanges?: Map<string, Set<string>>;
   /** 加载状态 */
   isLoading: boolean;
   /** 错误信息 */
@@ -189,6 +191,21 @@ export interface SessionState {
   refreshTranslations: (sessionId: string) => Promise<void>;
   /** 初始化Event监听器（返回清理函数） */
   initEventListener: () => Promise<() => void>;
+  /** 初始化编辑窗口事件监听器（返回清理函数） */
+  initEditorEventListener?: () => Promise<() => void>;
+  /** 更新单个字符串记录 */
+  updateStringRecord?: (
+    sessionId: string,
+    formId: string,
+    recordType: string,
+    subrecordType: string,
+    translatedText: string,
+    translationStatus: string
+  ) => void;
+  /** 批量保存翻译到数据库 */
+  batchSaveTranslations?: () => Promise<number>;
+  /** 获取未保存的修改数量 */
+  getPendingChangesCount?: () => number;
   /** 设置错误信息 */
   setError: (error: string | null) => void;
 }
