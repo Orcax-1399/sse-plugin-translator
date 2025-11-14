@@ -1,8 +1,10 @@
-import { Box, Typography, Paper, IconButton, LinearProgress, Fade, Tooltip } from '@mui/material';
+import { Box, Typography, Paper, IconButton, LinearProgress, Fade, Tooltip, Button, Badge } from '@mui/material';
 import InfoIcon from '@mui/icons-material/Info';
+import SaveIcon from '@mui/icons-material/Save';
 import type { PluginStringsResponse } from '../types';
 import StringTable from './StringTable';
 import { useSessionStore } from '../stores/sessionStore';
+import { showSuccess, showError } from '../stores/notificationStore';
 import { useState } from 'react';
 
 interface SessionPanelProps {
@@ -19,11 +21,39 @@ interface SessionPanelProps {
  */
 export default function SessionPanel({ sessionData }: SessionPanelProps) {
   const translationProgress = useSessionStore((state) => state.translationProgress);
+  const { getSessionPendingCount, saveSessionTranslations } = useSessionStore();
   const progress = translationProgress.get(sessionData.session_id);
   const [showInfo, setShowInfo] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   // 是否正在加载翻译
   const isLoadingTranslations = progress !== undefined && progress < 100;
+
+  // 获取当前 session 的未保存数量
+  const pendingCount = getSessionPendingCount ? getSessionPendingCount(sessionData.session_id) : 0;
+
+  // 保存当前 session 的翻译
+  const handleSaveTranslations = async () => {
+    if (!saveSessionTranslations) {
+      showError('保存功能不可用');
+      return;
+    }
+
+    setIsSaving(true);
+
+    try {
+      const savedCount = await saveSessionTranslations(sessionData.session_id);
+      if (savedCount > 0) {
+        showSuccess(`成功保存 ${savedCount} 条翻译`);
+      } else {
+        showSuccess('没有需要保存的翻译');
+      }
+    } catch (error) {
+      showError('保存翻译失败: ' + String(error));
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -37,16 +67,30 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
           py: 1,
         }}
       >
-        {/* 第一行：总计 + 信息按钮 */}
+        {/* 第一行：总计 + 保存按钮 + 信息按钮 */}
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: isLoadingTranslations ? 1 : 0 }}>
           <Typography variant="body2" color="text.secondary">
             总计: <strong>{sessionData.total_count}</strong> 条字符串
           </Typography>
+
+          {/* 保存翻译按钮 */}
+          <Badge badgeContent={pendingCount} color="error" sx={{ ml: 'auto' }}>
+            <Button
+              size="small"
+              variant="contained"
+              color="secondary"
+              startIcon={<SaveIcon />}
+              onClick={handleSaveTranslations}
+              disabled={isSaving || pendingCount === 0}
+            >
+              {isSaving ? '保存中...' : '保存翻译'}
+            </Button>
+          </Badge>
+
           <Tooltip title={showInfo ? '隐藏详情' : '查看插件详情'}>
             <IconButton
               size="small"
               onClick={() => setShowInfo(!showInfo)}
-              sx={{ ml: 'auto' }}
             >
               <InfoIcon fontSize="small" />
             </IconButton>

@@ -26,3 +26,4 @@ dist-ssr
 .claude
 CLAUDE.md
 settings.json
+userdata/

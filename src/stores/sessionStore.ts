@@ -13,10 +13,11 @@ import type {
 /**
  * 翻译更新事件 Payload
  */
-interface TranslationUpdatedPayload {
+export interface TranslationUpdatedPayload {
   form_id: string;
   record_type: string;
   subrecord_type: string;
+  original_text: string; // ✅ 添加 original_text 用于批量检测
   translated_text: string;
   translation_status: string;
 }
@@ -386,20 +387,31 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   /**
    * 批量保存翻译到数据库
    *
-   * 保存所有 original_text != translated_text 的记录
+   * 保存所有 session 中在 pendingChanges 记录的修改
    *
    * @returns 保存的记录数量
    */
   batchSaveTranslations: async (): Promise<number> => {
-    const { openedSessions } = get();
+    const { openedSessions, pendingChanges } = get();
+
+    if (!pendingChanges || pendingChanges.size === 0) {
+      console.log('没有未保存的修改');
+      return 0;
+    }
 
     // 收集所有需要保存的翻译
     const translationsToSave: Translation[] = [];
 
-    for (const [_sessionId, session] of openedSessions.entries()) {
+    for (const [sessionId, session] of openedSessions.entries()) {
+      // 获取该 session 的 pendingChanges
+      const changedFormIds = pendingChanges.get(sessionId);
+      if (!changedFormIds || changedFormIds.size === 0) {
+        continue; // 该 session 没有修改，跳过
+      }
+
       for (const record of session.strings) {
-        // 仅保存 original_text != translated_text 的记录
-        if (record.original_text !== record.translated_text) {
+        // ✅ 只保存在 pendingChanges 中的记录
+        if (changedFormIds.has(record.form_id)) {
           const now = Math.floor(Date.now() / 1000);
 
           translationsToSave.push({
@@ -457,5 +469,92 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       count += changes.size;
     }
     return count;
+  },
+
+  /**
+   * 获取单个 session 的未保存修改数量
+   *
+   * @param sessionId - Session ID
+   * @returns 未保存的记录数量
+   */
+  getSessionPendingCount: (sessionId: string): number => {
+    const { pendingChanges } = get();
+    if (!pendingChanges) return 0;
+
+    const sessionChanges = pendingChanges.get(sessionId);
+    return sessionChanges ? sessionChanges.size : 0;
+  },
+
+  /**
+   * 保存单个 session 的翻译到数据库
+   *
+   * @param sessionId - Session ID
+   * @returns 保存的记录数量
+   */
+  saveSessionTranslations: async (sessionId: string): Promise<number> => {
+    const { openedSessions, pendingChanges } = get();
+
+    const session = openedSessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Session 不存在: ${sessionId}`);
+    }
+
+    // 获取该 session 的 pendingChanges
+    const changedFormIds = pendingChanges?.get(sessionId);
+    if (!changedFormIds || changedFormIds.size === 0) {
+      console.log(`Session ${sessionId}: 没有未保存的修改`);
+      return 0;
+    }
+
+    // 收集该 session 需要保存的翻译
+    const translationsToSave: Translation[] = [];
+
+    for (const record of session.strings) {
+      // ✅ 只保存在 pendingChanges 中的记录
+      if (changedFormIds.has(record.form_id)) {
+        const now = Math.floor(Date.now() / 1000);
+
+        translationsToSave.push({
+          form_id: record.form_id,
+          record_type: record.record_type,
+          subrecord_type: record.subrecord_type,
+          editor_id: record.editor_id,
+          original_text: record.original_text,
+          translated_text: record.translated_text,
+          plugin_name: session.plugin_name,
+          created_at: now,
+          updated_at: now,
+        });
+      }
+    }
+
+    if (translationsToSave.length === 0) {
+      console.log(`Session ${sessionId}: 没有需要保存的翻译`);
+      return 0;
+    }
+
+    console.log(`Session ${sessionId}: 开始保存翻译 ${translationsToSave.length} 条`);
+
+    try {
+      // 调用后端批量保存接口
+      await invoke('batch_save_translations', {
+        translations: translationsToSave,
+      });
+
+      console.log(`✓ Session ${sessionId}: 保存成功 ${translationsToSave.length} 条`);
+
+      // ✅ 清空该 session 的 pendingChanges
+      if (pendingChanges && pendingChanges.has(sessionId)) {
+        const newPendingChanges = new Map(pendingChanges);
+        newPendingChanges.delete(sessionId);
+        set({ pendingChanges: newPendingChanges });
+      }
+
+      return translationsToSave.length;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error(`Session ${sessionId}: 保存翻译失败:`, errorMsg);
+      throw new Error(errorMsg);
+    }
   },
 }));

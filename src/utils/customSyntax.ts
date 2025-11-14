@@ -56,15 +56,14 @@ export const bookDescExtensions: Extension[] = [
 
 /**
  * 字体配置
- * 优先现代编程字体，回退到系统等宽字体
+ * 优先 Noto Sans SC（中文优化），回退到系统无衬线字体
+ * 注意：Noto Sans SC 是非等宽字体，适合自然语言文本显示
  */
 export const editorFontFamily = [
-  "'Cascadia Code'",
-  "'JetBrains Mono'",
-  "'Fira Code'",
-  "'Consolas'",
-  "'SF Mono'",
-  "'Menlo'",
-  "'Microsoft YaHei UI'",
-  "monospace",
+  "'Noto Sans SC'",          // Google Noto 中文优化字体（从 Google Fonts CDN 加载）
+  "'Noto Sans CJK SC'",      // 完整 CJK 字体（本地安装）
+  "'Microsoft YaHei UI'",    // Windows 中文字体回退
+  "'PingFang SC'",           // macOS 中文字体回退
+  "'Source Han Sans SC'",    // 思源黑体（Adobe 版本）
+  "sans-serif",              // 通用无衬线字体回退
 ].join(', ');

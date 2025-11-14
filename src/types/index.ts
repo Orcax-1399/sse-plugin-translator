@@ -206,6 +206,10 @@ export interface SessionState {
   batchSaveTranslations?: () => Promise<number>;
   /** 获取未保存的修改数量 */
   getPendingChangesCount?: () => number;
+  /** 获取单个 session 的未保存修改数量 */
+  getSessionPendingCount?: (sessionId: string) => number;
+  /** 保存单个 session 的翻译到数据库 */
+  saveSessionTranslations?: (sessionId: string) => Promise<number>;
   /** 设置错误信息 */
   setError: (error: string | null) => void;
 }
