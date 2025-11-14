@@ -1065,9 +1065,9 @@ dependencies = [
 
 [[package]]
 name = "esp_extractor"
-version = "0.5.0"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "206503787a49eb86c4ffa91d7cb049682ced3a86c168449f13ab7bbf14396044"
+checksum = "a24d60656d60e34f080df0d6c83ac933bf4f8006ad9410fac7df81926d3bce52"
 dependencies = [
  "anyhow",
  "bitflags 2.10.0",
@@ -3779,6 +3779,7 @@ version = "0.1.0"
 dependencies = [
  "directories",
  "esp_extractor",
+ "rayon",
  "rusqlite",
  "serde",
  "serde_json",

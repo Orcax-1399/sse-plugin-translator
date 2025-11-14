@@ -47,6 +47,7 @@ export default function Workspace() {
     openSession,
     switchSession,
     checkSessionExists,
+    initEventListener,
   } = useSessionStore();
 
   const [drawerOpen, setDrawerOpen] = useState(true);
@@ -64,6 +65,23 @@ export default function Workspace() {
       navigate('/');
     }
   }, [gamePath, isLoading, navigate]);
+
+  // 管理 Event 监听器生命周期（防止内存泄漏）
+  useEffect(() => {
+    let cleanup: (() => void) | null = null;
+
+    // 初始化监听器
+    initEventListener().then((unlistenFn) => {
+      cleanup = unlistenFn;
+    });
+
+    // 组件卸载时清理监听器
+    return () => {
+      if (cleanup) {
+        cleanup();
+      }
+    };
+  }, [initEventListener]);
 
   // 过滤插件列表
   const filteredPlugins = plugins.filter((plugin) =>

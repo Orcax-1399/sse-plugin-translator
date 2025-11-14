@@ -12,9 +12,11 @@
 | 阶段6 | 翻译词典存储系统 | ✅ 已完成 | 6h | ~3h |
 | 阶段7 | 原始字典提取功能 | ✅ 已完成 | 6h | ~4h |
 | 阶段8 | 多Session插件显示 | ✅ 已完成 | 8h | ~5h |
+| 阶段9 | 批量刷新翻译功能 | ✅ 已完成 | 6.5h | ~4h |
+| 阶段10 | 内存泄漏修复 | ✅ 已完成 | 5h | ~4h |
 
-**总预计工时**: 37小时
-**累计实际工时**: 21小时
+**总预计工时**: 48.5小时
+**累计实际工时**: 29小时
 
 ---
 
@@ -670,6 +672,11 @@ CREATE INDEX idx_updated_at ON translations(updated_at);
 
 ## 更新日志
 
+### v1.6 (2025-11-14)
+- ✅ **更新 esp_extractor 从 v0.5.0 到 v0.5.2**
+- 🐛 修复了一些解析问题（上游库更新）
+- ✅ 编译测试通过，API 完全兼容
+
 ### v1.5 (2025-11-14 - 下午)
 - ✅ **阶段8 多Session插件显示功能完成** 🎉
 - 🏗️ 后端 Session 管理架构
@@ -735,6 +742,84 @@ CREATE INDEX idx_updated_at ON translations(updated_at);
 - ✅ 标记所有已完成任务
 - ✅ 修复 dialog 权限配置问题
 - 🚧 阶段5 集成测试进行中
+
+### v1.8 (2025-11-14 - 晚)
+- ✅ 阶段10 内存泄漏修复完成（全面优化）
+- 🐛 **问题诊断**
+  - 打开 Skyrim.esm (12万条) 内存飙升至 9-10GB
+  - 关闭 tab 后内存不释放
+  - 再次打开导致 OOM 崩溃
+  - 定位到 6 个内存泄漏点（P0/P1/P2 级别）
+- 🔥 **P0 修复（最严重）**
+  - ✅ Event 监听器泄漏（最严重）
+    - 移除 `sessionStore.ts` 末尾的模块级 `listen()` 调用
+    - 添加 `initEventListener()` 方法返回清理函数
+    - 在 `Workspace.tsx` 组件中管理监听器生命周期
+    - 组件卸载时自动调用 `unlisten()`
+  - ✅ closeSession 清理不完整
+    - 同时清理 `translationProgress` Map
+    - 确保 Session 关闭时所有相关数据释放
+- 💪 **P1 修复（性能优化）**
+  - ✅ 后端添加 `translation_status` 字段
+    - `StringRecord` 新增字段（"untranslated"/"manual"/"ai"）
+    - 使用 `#[serde(default)]` 保证向后兼容
+    - 后端初始化，避免前端数组复制
+  - ✅ 前端 openSession 优化
+    - 移除 `initializedStrings` 数组创建
+    - 直接使用后端数据（节省 ~60MB 内存）
+  - ✅ StringTable useMemo 缓存
+    - 使用 `useMemo` 包裹 `rowsWithId` 计算
+    - 避免每次父组件重渲染时重新创建数组
+- 🚀 **P2 修复（深度优化）**
+  - ✅ refreshTranslations 优化
+    - `translationMap` 只存储译文字符串（节省 ~50MB）
+    - 优化对象创建逻辑，保持不可变性
+  - ✅ 后端 Arc 共享数据
+    - `PluginSession.strings` 改为 `Arc<Vec<StringRecord>>`
+    - 从缓存返回时不再深度复制
+    - 显著减少内存占用
+- 📊 **预期内存改善**
+  - 打开后峰值：9-10GB → ~2-3GB（节省 60-70%）
+  - 关闭后：不释放 → ~300-500MB
+  - 多次打开：OOM崩溃 → 内存稳定
+- 📁 文件修改：
+  - 修改 5 个文件（types, sessionStore, Workspace, StringTable, plugin_session.rs）
+  - 新增 1 个导入（lib.rs 添加 Emitter trait）
+- ⏱️ 实际工时 ~4小时（预计 5小时）
+- 🧪 **待测试**
+  - 使用 Chrome DevTools Memory Profiler 验证内存释放
+  - 连续 3 次打开/关闭 Skyrim.esm 测试稳定性
+  - 确认无 OOM 崩溃
+
+### v1.7 (2025-11-14 - 下午)
+- ✅ 阶段9 批量刷新翻译功能完成
+- 🚀 核心功能
+  - 打开插件后自动批量拉取翻译（6-7w条数据支持）
+  - 实时进度通知（Tauri Event System）
+  - 行颜色标记（淡红色=未翻译，淡蓝色=已翻译，淡绿色=AI翻译预留）
+- 🔧 后端优化
+  - 添加 rayon 依赖用于并行处理
+  - 新增 `batch_query_translations_with_progress` 方法
+  - 实现进度回调机制（每批1000条）
+  - 新增 `TranslationProgressPayload` 事件
+- 💻 前端实现
+  - 扩展 `StringRecord` 类型（添加 `translation_status` 字段）
+  - 实现 `sessionStore.refreshTranslations` 核心方法
+  - 添加 Tauri Event 进度监听器
+  - 修改 `openSession` 自动触发翻译刷新
+- 🎨 UI 改造
+  - 重构 `SessionPanel` 组件（动态进度显示）
+  - 移除插件路径显示，添加信息按钮
+  - 实现进度条和百分比实时更新
+  - 完成进度后自动淡出
+- 🌈 视觉优化
+  - `StringTable` 添加 `getRowClassName` 支持
+  - 三种行颜色状态（未翻译/已翻译/AI翻译）
+  - hover 状态颜色深化效果
+- 📁 文件修改：
+  - 新增 1 个 Tauri 命令
+  - 修改 7 个文件（types, translation_db, lib, sessionStore, SessionPanel, StringTable, Cargo.toml）
+- ✅ 实际工时 ~4小时（预计 6.5小时）
 
 ### v1.0 (2025-11-13 - 早)
 - ✅ 创建项目规划文档

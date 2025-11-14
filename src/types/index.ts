@@ -93,6 +93,11 @@ export interface ExtractionStats {
 }
 
 /**
+ * 翻译状态类型
+ */
+export type TranslationStatus = 'untranslated' | 'manual' | 'ai';
+
+/**
  * 字符串记录（用于表格显示）
  */
 export interface StringRecord {
@@ -108,6 +113,8 @@ export interface StringRecord {
   original_text: string;
   /** 译文（可编辑） */
   translated_text: string;
+  /** 翻译状态 (用于标记来源和决定行颜色) */
+  translation_status?: TranslationStatus;
 }
 
 /**
@@ -141,6 +148,20 @@ export interface SessionInfo {
 }
 
 /**
+ * 翻译进度通知 Payload
+ */
+export interface TranslationProgressPayload {
+  /** Session ID */
+  session_id: string;
+  /** 当前处理数量 */
+  current: number;
+  /** 总数量 */
+  total: number;
+  /** 百分比 (0-100) */
+  percentage: number;
+}
+
+/**
  * Session 状态
  */
 export interface SessionState {
@@ -148,6 +169,8 @@ export interface SessionState {
   openedSessions: Map<string, PluginStringsResponse>;
   /** 当前激活的 Session ID */
   activeSessionId: string | null;
+  /** 翻译刷新进度 (Map: session_id -> 百分比 0-100) */
+  translationProgress: Map<string, number>;
   /** 加载状态 */
   isLoading: boolean;
   /** 错误信息 */
@@ -162,6 +185,10 @@ export interface SessionState {
   switchSession: (sessionId: string) => void;
   /** 检查 Session 是否已存在 */
   checkSessionExists: (pluginName: string) => boolean;
+  /** 刷新Session的翻译（从数据库批量拉取） */
+  refreshTranslations: (sessionId: string) => Promise<void>;
+  /** 初始化Event监听器（返回清理函数） */
+  initEventListener: () => Promise<() => void>;
   /** 设置错误信息 */
   setError: (error: string | null) => void;
 }

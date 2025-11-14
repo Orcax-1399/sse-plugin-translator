@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { DataGrid, GridColDef } from '@mui/x-data-grid';
 import { Box } from '@mui/material';
 import type { StringRecord } from '../types';
@@ -53,11 +54,13 @@ export default function StringTable({ rows }: StringTableProps) {
     },
   ];
 
-  // 为 DataGrid 添加唯一 ID
-  const rowsWithId = rows.map((row, index) => ({
-    id: index, // 使用索引作为唯一 ID
-    ...row,
-  }));
+  // ✅ 使用 useMemo 缓存计算结果（防止重渲染时重新创建数组）
+  const rowsWithId = useMemo(() => {
+    return rows.map((row, index) => ({
+      id: index, // 使用索引作为唯一 ID
+      ...row,
+    }));
+  }, [rows]);
 
   return (
     <Box
@@ -76,11 +79,43 @@ export default function StringTable({ rows }: StringTableProps) {
         }}
         pageSizeOptions={[25, 50, 100]}
         disableRowSelectionOnClick
+        getRowClassName={(params) => {
+          const row = params.row as StringRecord;
+          switch (row.translation_status) {
+            case 'untranslated':
+              return 'row-untranslated';
+            case 'manual':
+              return 'row-manual';
+            case 'ai':
+              return 'row-ai';
+            default:
+              return '';
+          }
+        }}
         sx={{
           border: 0,
           width: '100%',
           '& .MuiDataGrid-cell': {
             borderBottom: '1px solid #e0e0e0',
+          },
+          // 行颜色样式
+          '& .row-untranslated': {
+            backgroundColor: '#ffebee !important', // 淡红色（未翻译）
+            '&:hover': {
+              backgroundColor: '#ffcdd2 !important',
+            },
+          },
+          '& .row-manual': {
+            backgroundColor: '#e3f2fd !important', // 淡蓝色（已翻译）
+            '&:hover': {
+              backgroundColor: '#bbdefb !important',
+            },
+          },
+          '& .row-ai': {
+            backgroundColor: '#e8f5e9 !important', // 淡绿色（AI翻译，预留）
+            '&:hover': {
+              backgroundColor: '#c8e6c9 !important',
+            },
           },
         }}
       />

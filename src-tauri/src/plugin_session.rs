@@ -2,6 +2,7 @@ use esp_extractor::LoadedPlugin;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
 
 /// 字符串记录（前端显示用）
@@ -13,13 +14,20 @@ pub struct StringRecord {
     pub subrecord_type: String,
     pub original_text: String,
     pub translated_text: String, // 初始复制 original_text
+    #[serde(default = "default_translation_status")]
+    pub translation_status: String, // 翻译状态：untranslated/manual/ai
 }
 
-/// 插件 Session
+/// 默认翻译状态（用于向后兼容）
+fn default_translation_status() -> String {
+    "untranslated".to_string()
+}
+
+/// 插件 Session（使用 Arc 共享数据，减少克隆开销）
 pub struct PluginSession {
     pub plugin_name: String,
     pub plugin_path: PathBuf,
-    pub strings: Vec<StringRecord>,
+    pub strings: Arc<Vec<StringRecord>>,
     pub loaded_at: Instant,
 }
 
@@ -74,11 +82,12 @@ impl PluginSessionManager {
         // 检查缓存
         if let Some(session) = self.sessions.get(&plugin_name) {
             println!("✓ 使用缓存的 Session: {}", plugin_name);
+            // ✅ 只克隆 Arc 指向的数据（引用计数增加，不深度复制）
             return Ok(PluginStringsResponse {
                 session_id: plugin_name.clone(),
                 plugin_name: plugin_name.clone(),
                 plugin_path: plugin_path.to_string_lossy().to_string(),
-                strings: session.strings.clone(),
+                strings: (*session.strings).clone(), // 只在这里克隆一次
                 total_count: session.strings.len(),
             });
         }
@@ -103,16 +112,20 @@ impl PluginSessionManager {
                 subrecord_type: s.subrecord_type,
                 original_text: s.original_text.clone(),
                 translated_text: s.original_text, // 初始复制 original_text
+                translation_status: "untranslated".to_string(), // 初始状态：未翻译
             })
             .collect();
 
         let total_count = strings.len();
 
+        // ✅ 将 strings 包装在 Arc 中，支持共享
+        let strings_arc = Arc::new(strings);
+
         // 创建 Session
         let session = PluginSession {
             plugin_name: plugin_name.clone(),
             plugin_path: plugin_path.clone(),
-            strings: strings.clone(),
+            strings: Arc::clone(&strings_arc),
             loaded_at: Instant::now(),
         };
 
@@ -124,7 +137,7 @@ impl PluginSessionManager {
             session_id: plugin_name.clone(),
             plugin_name,
             plugin_path: plugin_path.to_string_lossy().to_string(),
-            strings,
+            strings: (*strings_arc).clone(), // 只在返回时克隆一次
             total_count,
         })
     }

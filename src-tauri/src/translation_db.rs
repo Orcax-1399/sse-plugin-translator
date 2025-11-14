@@ -201,12 +201,30 @@ impl TranslationDB {
 
     /// 批量查询翻译
     pub fn batch_query_translations(&self, forms: Vec<FormIdentifier>) -> Result<Vec<Translation>> {
+        self.batch_query_translations_with_progress(forms, |_, _| {})
+    }
+
+    /// 批量查询翻译（带进度回调）
+    ///
+    /// # 参数
+    /// - `forms`: Form标识符列表
+    /// - `progress_callback`: 进度回调函数 (当前数量, 总数量)
+    pub fn batch_query_translations_with_progress<F>(
+        &self,
+        forms: Vec<FormIdentifier>,
+        mut progress_callback: F,
+    ) -> Result<Vec<Translation>>
+    where
+        F: FnMut(usize, usize),
+    {
         if forms.is_empty() {
             return Ok(Vec::new());
         }
 
         let conn = self.conn.lock().unwrap();
         let mut translations = Vec::new();
+        let total = forms.len();
+        let mut processed = 0;
 
         // 分批查询（每批最多1000条）
         for chunk in forms.chunks(1000) {
@@ -254,6 +272,10 @@ impl TranslationDB {
             for row in rows {
                 translations.push(row?);
             }
+
+            // 更新进度
+            processed += chunk.len();
+            progress_callback(processed, total);
         }
 
         Ok(translations)

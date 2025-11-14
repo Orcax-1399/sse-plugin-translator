@@ -10,6 +10,17 @@ use translation_db::{TranslationDB, Translation, FormIdentifier, TranslationStat
 use esp_service::{ExtractionStats, get_base_plugins, extract_base_dictionary};
 use plugin_session::{PluginSessionManager, PluginStringsResponse, SessionInfo};
 use std::sync::Mutex;
+use serde::Serialize;
+use tauri::Emitter;
+
+/// 翻译进度通知 Payload
+#[derive(Debug, Clone, Serialize)]
+struct TranslationProgressPayload {
+    session_id: String,
+    current: usize,
+    total: usize,
+    percentage: f64,
+}
 
 /// 获取应用配置
 #[tauri::command]
@@ -89,6 +100,39 @@ fn batch_query_translations(
     let db = db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
     db.batch_query_translations(forms)
         .map_err(|e| format!("批量查询翻译失败: {}", e))
+}
+
+/// 批量查询翻译（带进度通知）
+#[tauri::command]
+fn batch_query_translations_with_progress(
+    app: tauri::AppHandle,
+    db: tauri::State<Mutex<TranslationDB>>,
+    session_id: String,
+    forms: Vec<FormIdentifier>,
+) -> Result<Vec<Translation>, String> {
+    let db = db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+
+    // 使用闭包捕获 app 和 session_id 来发送进度事件
+    let session_id_clone = session_id.clone();
+    let result = db.batch_query_translations_with_progress(forms, move |current, total| {
+        let percentage = if total > 0 {
+            (current as f64 / total as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        let payload = TranslationProgressPayload {
+            session_id: session_id_clone.clone(),
+            current,
+            total,
+            percentage,
+        };
+
+        // 发送进度事件（忽略发送失败）
+        let _ = app.emit("translation_progress", payload);
+    });
+
+    result.map_err(|e| format!("批量查询翻译失败: {}", e))
 }
 
 /// 获取翻译统计信息
@@ -214,6 +258,7 @@ pub fn run() {
             batch_save_translations,
             get_translation,
             batch_query_translations,
+            batch_query_translations_with_progress,
             get_translation_statistics,
             clear_plugin_translations,
             clear_all_translations,
