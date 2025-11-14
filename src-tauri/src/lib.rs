@@ -3,16 +3,18 @@ mod scanner;
 mod translation_db;
 mod esp_service;
 mod plugin_session;
+mod atomic_db;
 
 use settings::{Settings, read_settings, write_settings};
 use scanner::{PluginInfo, validate_game_path, scan_plugins};
 use translation_db::{TranslationDB, Translation, FormIdentifier, TranslationStats};
 use esp_service::{ExtractionStats, get_base_plugins, extract_base_dictionary};
 use plugin_session::{PluginSessionManager, PluginStringsResponse, SessionInfo, StringRecord};
+use atomic_db::{AtomicDB, AtomTranslation, AtomSource};
 use std::sync::Mutex;
 use std::collections::HashMap;
 use serde::Serialize;
-use tauri::{Emitter, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 /// 翻译进度通知 Payload
 #[derive(Debug, Clone, Serialize)]
@@ -165,6 +167,16 @@ fn clear_all_translations(
     let db = db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
     db.clear_all_translations()
         .map_err(|e| format!("清除所有翻译失败: {}", e))
+}
+
+/// 清除基础词典数据（9个官方插件）
+#[tauri::command]
+fn clear_base_dictionary(
+    db: tauri::State<Mutex<TranslationDB>>,
+) -> Result<usize, String> {
+    let db = db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+    db.clear_base_dictionary()
+        .map_err(|e| format!("清除基础词典失败: {}", e))
 }
 
 // ==================== 插件 Session 管理命令 ====================
@@ -353,12 +365,99 @@ fn query_word_translations(
         .map_err(|e| format!("查询单词翻译失败: {}", e))
 }
 
+// ==================== 原子数据库相关命令 ====================
+
+/// 打开原子数据库管理窗口
+#[tauri::command]
+async fn open_atomic_db_window(app: tauri::AppHandle) -> Result<String, String> {
+    let window_label = "atomic-db-window";
+
+    // 检查窗口是否已经打开
+    if let Some(window) = app.get_webview_window(window_label) {
+        // 窗口已存在，聚焦它
+        window.set_focus().map_err(|e| format!("窗口聚焦失败: {}", e))?;
+        return Ok(window_label.to_string());
+    }
+
+    // 创建新窗口
+    let builder = WebviewWindowBuilder::new(
+        &app,
+        window_label,
+        WebviewUrl::App("/atomic-db".into()),
+    )
+    .title("原子数据库管理")
+    .inner_size(1200.0, 800.0)
+    .resizable(true)
+    .center();
+
+    match builder.build() {
+        Ok(_) => Ok(window_label.to_string()),
+        Err(e) => Err(format!("创建原子数据库窗口失败: {}", e)),
+    }
+}
+
+/// 获取所有原子翻译
+#[tauri::command]
+fn get_all_atoms(
+    atomic_db: tauri::State<Mutex<AtomicDB>>,
+) -> Result<Vec<AtomTranslation>, String> {
+    let db = atomic_db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+    db.get_all_atoms()
+        .map_err(|e| format!("获取原子翻译失败: {}", e))
+}
+
+/// 添加原子翻译
+#[tauri::command]
+fn add_atom_translation(
+    atomic_db: tauri::State<Mutex<AtomicDB>>,
+    original: String,
+    translated: String,
+    source: String,
+) -> Result<(), String> {
+    let db = atomic_db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+
+    let atom_source = match source.as_str() {
+        "base" => AtomSource::Base,
+        "ai" => AtomSource::AI,
+        _ => AtomSource::Manual,
+    };
+
+    db.upsert_atom(&original, &translated, atom_source)
+        .map_err(|e| format!("添加原子翻译失败: {}", e))
+}
+
+/// 删除原子翻译
+#[tauri::command]
+fn delete_atom_translation(
+    atomic_db: tauri::State<Mutex<AtomicDB>>,
+    original: String,
+) -> Result<(), String> {
+    let db = atomic_db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+    db.delete_atom(&original)
+        .map_err(|e| format!("删除原子翻译失败: {}", e))
+}
+
+/// 使用原子库替换文本
+#[tauri::command]
+fn replace_text_with_atoms(
+    atomic_db: tauri::State<Mutex<AtomicDB>>,
+    text: String,
+) -> Result<String, String> {
+    let db = atomic_db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+    Ok(db.replace_with_atoms(&text))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 初始化翻译数据库
     let db_path = get_db_path();
     let translation_db = TranslationDB::new(db_path)
         .expect("无法初始化翻译数据库");
+
+    // 初始化原子数据库
+    let atomic_db_path = get_atomic_db_path();
+    let atomic_db = AtomicDB::new(atomic_db_path.to_str().expect("路径转换失败"))
+        .expect("无法初始化原子数据库");
 
     // 初始化插件 Session 管理器
     let session_manager = PluginSessionManager::new();
@@ -370,6 +469,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(Mutex::new(translation_db))
+        .manage(Mutex::new(atomic_db))
         .manage(Mutex::new(session_manager))
         .manage(editor_data_store)
         .invoke_handler(tauri::generate_handler![
@@ -385,6 +485,7 @@ pub fn run() {
             get_translation_statistics,
             clear_plugin_translations,
             clear_all_translations,
+            clear_base_dictionary,
             load_plugin_session,
             close_plugin_session,
             list_plugin_sessions,
@@ -392,7 +493,12 @@ pub fn run() {
             extract_dictionary,
             open_editor_window,
             get_editor_data,
-            query_word_translations
+            query_word_translations,
+            open_atomic_db_window,
+            get_all_atoms,
+            add_atom_translation,
+            delete_atom_translation,
+            replace_text_with_atoms
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -421,4 +527,29 @@ fn get_db_path() -> std::path::PathBuf {
     }
 
     userdata_dir.join("translations.db")
+}
+
+/// 获取原子数据库文件路径
+fn get_atomic_db_path() -> std::path::PathBuf {
+    let userdata_dir = if cfg!(debug_assertions) {
+        // 开发模式：项目根目录
+        std::env::current_dir()
+            .expect("无法获取当前目录")
+            .join("userdata")
+    } else {
+        // 生产模式：可执行文件同级目录
+        std::env::current_exe()
+            .expect("无法获取可执行文件路径")
+            .parent()
+            .expect("无法获取父目录")
+            .join("userdata")
+    };
+
+    // 确保userdata目录存在
+    if !userdata_dir.exists() {
+        std::fs::create_dir_all(&userdata_dir)
+            .expect("无法创建userdata目录");
+    }
+
+    userdata_dir.join("atomic_translations.db")
 }

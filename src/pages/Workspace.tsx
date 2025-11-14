@@ -18,7 +18,9 @@ import {
 } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import SettingsIcon from '@mui/icons-material/Settings';
+import StorageIcon from '@mui/icons-material/Storage';
 import { listen } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '../stores/appStore';
 import { useSessionStore, type TranslationUpdatedPayload } from '../stores/sessionStore';
 import SettingsModal from '../components/SettingsModal';
@@ -198,6 +200,15 @@ export default function Workspace() {
     setSettingsOpen(false);
   };
 
+  // 打开原子数据库管理窗口
+  const handleOpenAtomicDb = async () => {
+    try {
+      await invoke('open_atomic_db_window');
+    } catch (error) {
+      console.error('打开原子数据库窗口失败:', error);
+    }
+  };
+
   // 处理插件点击：检查是否已打开，已打开则切换，未打开则新建
   const handlePluginClick = (plugin: PluginInfo) => {
     const pluginName = plugin.name;
@@ -292,6 +303,10 @@ export default function Workspace() {
           <Typography variant="body2" sx={{ mr: 2, opacity: 0.8 }}>
             {gamePath}
           </Typography>
+
+          <IconButton color="inherit" onClick={handleOpenAtomicDb} title="原子数据库">
+            <StorageIcon />
+          </IconButton>
 
           <IconButton color="inherit" onClick={handleOpenSettings}>
             <SettingsIcon />

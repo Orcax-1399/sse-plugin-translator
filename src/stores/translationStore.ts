@@ -60,6 +60,11 @@ interface TranslationState {
   clearAllTranslations: () => Promise<void>;
 
   /**
+   * 清除基础词典数据（9个官方插件）
+   */
+  clearBaseDictionary: () => Promise<number>;
+
+  /**
    * 获取基础插件列表
    */
   getBasePluginsList: () => Promise<string[]>;
@@ -184,6 +189,22 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
       await invoke<number>('clear_all_translations');
       // 清除后刷新统计
       set({ stats: null });
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      set({ error: errorMsg });
+      throw error;
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  clearBaseDictionary: async () => {
+    set({ isLoading: true, error: null });
+    try {
+      const deletedCount = await invoke<number>('clear_base_dictionary');
+      // 清除后刷新统计
+      set({ stats: null });
+      return deletedCount;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       set({ error: errorMsg });

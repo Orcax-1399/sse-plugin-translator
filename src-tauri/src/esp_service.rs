@@ -1,6 +1,7 @@
 use esp_extractor::LoadedPlugin;
 use crate::translation_db::Translation;
 use std::path::Path;
+use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 
 /// 基础插件列表常量
@@ -51,7 +52,13 @@ pub fn get_base_plugins() -> Vec<String> {
     BASE_PLUGINS.iter().map(|s| s.to_string()).collect()
 }
 
-/// 从单个插件文件提取字符串
+/// 从单个插件文件提取字符串（双语版本：英文 + 中文对比）
+///
+/// # 工作原理
+/// 1. 加载英文版（Strings/XXX_English.STRINGS）提取所有字符串作为 original_text
+/// 2. 加载中文版（Strings/XXX_Chinese.STRINGS）提取所有字符串作为 translated_text
+/// 3. 根据 (form_id, record_type, subrecord_type) 进行匹配
+/// 4. 如果中文版没有对应记录，则 translated_text 使用英文（未本地化的情况）
 ///
 /// # 参数
 /// * `plugin_path` - 插件文件的完整路径
@@ -60,12 +67,26 @@ pub fn get_base_plugins() -> Vec<String> {
 /// * `Ok(Vec<Translation>)` - 成功提取的翻译记录列表
 /// * `Err(String)` - 错误信息
 pub fn extract_plugin_strings(plugin_path: &Path) -> Result<Vec<Translation>, String> {
-    // 使用智能自动加载（自动处理本地化插件）
-    let loaded = LoadedPlugin::load_auto(plugin_path.to_path_buf(), Some("chinese"))
-        .map_err(|e| format!("加载插件失败: {}", e))?;
+    // 1. 加载英文版
+    let loaded_en = LoadedPlugin::load_auto(plugin_path.to_path_buf(), Some("english"))
+        .map_err(|e| format!("加载英文版插件失败: {}", e))?;
+    let english_strings = loaded_en.extract_strings();
 
-    // 提取字符串
-    let extracted_strings = loaded.extract_strings();
+    println!("  📖 英文版提取 {} 条记录", english_strings.len());
+
+    // 2. 加载中文版
+    let loaded_zh = LoadedPlugin::load_auto(plugin_path.to_path_buf(), Some("chinese"))
+        .map_err(|e| format!("加载中文版插件失败: {}", e))?;
+    let chinese_strings = loaded_zh.extract_strings();
+
+    println!("  📖 中文版提取 {} 条记录", chinese_strings.len());
+
+    // 3. 建立中文映射表 (form_id|record_type|subrecord_type -> chinese_text)
+    let mut chinese_map: HashMap<String, String> = HashMap::new();
+    for s in chinese_strings {
+        let key = format!("{}|{}|{}", s.form_id, s.record_type, s.subrecord_type);
+        chinese_map.insert(key, s.original_text);
+    }
 
     // 获取当前时间戳
     let now = std::time::SystemTime::now()
@@ -79,22 +100,39 @@ pub fn extract_plugin_strings(plugin_path: &Path) -> Result<Vec<Translation>, St
         .and_then(|n| n.to_str())
         .map(|s| s.to_string());
 
-    // 转换为 Translation 结构
-    let translations: Vec<Translation> = extracted_strings
+    // 4. 遍历英文记录，查找对应的中文翻译
+    let translations: Vec<Translation> = english_strings
         .into_iter()
-        .map(|s| Translation {
-            form_id: s.form_id,
-            record_type: s.record_type,
-            subrecord_type: s.subrecord_type,
-            editor_id: s.editor_id,
-            original_text: s.original_text.clone(),
-            // 用户说明 translated_text 是 deprecated 字段，暂时填充相同值以满足 NOT NULL 约束
-            translated_text: s.original_text,
-            plugin_name: plugin_name.clone(),
-            created_at: now,
-            updated_at: now,
+        .map(|s| {
+            let key = format!("{}|{}|{}", s.form_id, s.record_type, s.subrecord_type);
+
+            // 查找对应的中文翻译
+            let translated_text = chinese_map
+                .get(&key)
+                .cloned()
+                .unwrap_or_else(|| s.original_text.clone());
+
+            Translation {
+                form_id: s.form_id,
+                record_type: s.record_type,
+                subrecord_type: s.subrecord_type,
+                editor_id: s.editor_id,
+                original_text: s.original_text,  // 英文原文
+                translated_text,                 // 中文翻译或英文回退
+                plugin_name: plugin_name.clone(),
+                created_at: now,
+                updated_at: now,
+            }
         })
         .collect();
+
+    // 统计匹配情况
+    let matched_count = translations.iter()
+        .filter(|t| t.original_text != t.translated_text)
+        .count();
+    let unmatched_count = translations.len() - matched_count;
+
+    println!("  ✅ 匹配成功 {} 条，未匹配 {} 条", matched_count, unmatched_count);
 
     Ok(translations)
 }

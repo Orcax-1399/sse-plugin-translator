@@ -36,8 +36,9 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [isExtracting, setIsExtracting] = useState(false);
   const [extractionResult, setExtractionResult] = useState<ExtractionStats | null>(null);
   const [extractionError, setExtractionError] = useState<string | null>(null);
+  const [deletedCount, setDeletedCount] = useState<number | null>(null);
 
-  const { extractDictionary, getBasePluginsList } = useTranslationStore();
+  const { extractDictionary, getBasePluginsList, clearBaseDictionary } = useTranslationStore();
   const [basePlugins, setBasePlugins] = useState<string[]>([]);
 
   // 加载基础插件列表
@@ -67,23 +68,46 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
     }
   };
 
-  // 执行提取
+  // 执行提取（清除并重新提取）
   const handleExtract = async () => {
     if (!dataDir) {
       setExtractionError('请先选择游戏 Data 目录');
       return;
     }
 
+    // 确认对话框
+    const confirmed = window.confirm(
+      '⚠️ 注意：\n\n' +
+      '此操作会先清除所有已存在的基础词典数据（9个官方插件），然后重新提取。\n' +
+      '用户手动翻译的其他插件数据不受影响。\n\n' +
+      '是否继续？'
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
     setIsExtracting(true);
     setExtractionError(null);
     setExtractionResult(null);
+    setDeletedCount(null);
 
     try {
+      // 第一步：清除基础词典
+      console.log('🗑️ 正在清除旧的基础词典数据...');
+      const deleted = await clearBaseDictionary();
+      setDeletedCount(deleted);
+      console.log(`✅ 已清除 ${deleted} 条旧记录`);
+
+      // 第二步：重新提取
+      console.log('📖 正在重新提取基础词典...');
       const stats = await extractDictionary(dataDir);
       setExtractionResult(stats);
+      console.log('✅ 提取完成');
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       setExtractionError(errorMsg);
+      console.error('❌ 提取失败:', errorMsg);
     } finally {
       setIsExtracting(false);
     }
@@ -94,6 +118,7 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
     setDataDir('');
     setExtractionResult(null);
     setExtractionError(null);
+    setDeletedCount(null);
     setBasePlugins([]);
     onClose();
   };
@@ -195,6 +220,11 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
                 ✅ 提取完成！
               </Typography>
               <Box sx={{ mt: 1 }}>
+                {deletedCount !== null && deletedCount > 0 && (
+                  <Typography variant="body2" color="warning.main">
+                    • 清除旧记录：{deletedCount.toLocaleString()} 条
+                  </Typography>
+                )}
                 <Typography variant="body2">
                   • 成功文件：{extractionResult.successful_files}/{extractionResult.total_files}
                 </Typography>
@@ -224,9 +254,20 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
 
           {/* 说明文本 */}
           <Box sx={{ bgcolor: 'info.lighter', p: 2, borderRadius: 1 }}>
-            <Typography variant="body2" color="text.secondary">
-              💡 提示：此功能将从游戏主文件中提取已汉化的字符串，作为翻译基础词典。
-              提取过程可能需要几分钟，请耐心等待。
+            <Typography variant="body2" color="text.secondary" gutterBottom>
+              💡 <strong>功能说明</strong>：
+            </Typography>
+            <Typography variant="body2" color="text.secondary" component="div">
+              • 提取英文版和中文版字符串，建立英→中翻译映射
+            </Typography>
+            <Typography variant="body2" color="text.secondary" component="div">
+              • 每次提取会先清除旧的基础词典数据，然后重新建立
+            </Typography>
+            <Typography variant="body2" color="text.secondary" component="div">
+              • 提取过程可能需要几分钟，请耐心等待
+            </Typography>
+            <Typography variant="body2" color="text.secondary" component="div" sx={{ mt: 1 }}>
+              ⚠️ <strong>注意</strong>：只会清除9个官方插件的数据，用户翻译的其他插件不受影响
             </Typography>
           </Box>
         </Box>

@@ -3777,6 +3777,7 @@ dependencies = [
 name = "sse-plugin-translator"
 version = "0.1.0"
 dependencies = [
+ "aho-corasick",
  "directories",
  "esp_extractor",
  "rayon",

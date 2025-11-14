@@ -109,11 +109,9 @@ impl TranslationDB {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(form_id, record_type, subrecord_type)
              DO UPDATE SET
-                editor_id = excluded.editor_id,
-                original_text = excluded.original_text,
                 translated_text = excluded.translated_text,
-                plugin_name = excluded.plugin_name,
-                updated_at = excluded.updated_at",
+                updated_at = excluded.updated_at
+                -- ⚠️ 注意：original_text 不被更新，防止已汉化源文件污染英文原文",
             params![
                 translation.form_id,
                 translation.record_type,
@@ -144,11 +142,9 @@ impl TranslationDB {
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                  ON CONFLICT(form_id, record_type, subrecord_type)
                  DO UPDATE SET
-                    editor_id = excluded.editor_id,
-                    original_text = excluded.original_text,
                     translated_text = excluded.translated_text,
-                    plugin_name = excluded.plugin_name,
-                    updated_at = excluded.updated_at",
+                    updated_at = excluded.updated_at
+                    -- ⚠️ 注意：original_text 不被更新，防止已汉化源文件污染英文原文",
                 params![
                     translation.form_id,
                     translation.record_type,
@@ -339,6 +335,44 @@ impl TranslationDB {
     pub fn clear_all_translations(&self) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
         let count = conn.execute("DELETE FROM translations", [])?;
+        Ok(count)
+    }
+
+    /// 删除基础词典数据（9个官方插件）
+    ///
+    /// # 说明
+    /// 只删除基础插件的翻译数据，保留用户手动翻译的其他插件数据
+    /// 适用于重新提取基础词典的场景
+    pub fn clear_base_dictionary(&self) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+
+        // 基础插件列表（与 esp_service.rs 保持一致）
+        let base_plugins = vec![
+            "Skyrim.esm",
+            "Update.esm",
+            "HearthFires.esm",
+            "Dragonborn.esm",
+            "Dawnguard.esm",
+            "ccQDRSSE001-SurvivalMode.esl",
+            "ccBGSSSE037-Curios.esl",
+            "ccBGSSSE025-AdvDSGS.esm",
+            "ccBGSSSE001-Fish.esm",
+        ];
+
+        // 构造 IN 查询的占位符
+        let placeholders = base_plugins.iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let query = format!("DELETE FROM translations WHERE plugin_name IN ({})", placeholders);
+
+        // 转换为 rusqlite 参数
+        let params: Vec<&dyn rusqlite::ToSql> = base_plugins.iter()
+            .map(|s| s as &dyn rusqlite::ToSql)
+            .collect();
+
+        let count = conn.execute(&query, rusqlite::params_from_iter(params))?;
         Ok(count)
     }
 
