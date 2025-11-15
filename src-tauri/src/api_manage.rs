@@ -9,11 +9,17 @@ pub struct ApiConfig {
     pub id: i64,
     pub name: String,
     pub endpoint: String,
+    #[serde(rename = "apiKey")]
     pub api_key: String,
+    #[serde(rename = "modelName")]
     pub model_name: String,
+    #[serde(rename = "maxTokens")]
     pub max_tokens: i32,
+    #[serde(rename = "isActive")]
     pub is_active: bool,
+    #[serde(rename = "createdAt")]
     pub created_at: i64,
+    #[serde(rename = "updatedAt")]
     pub updated_at: i64,
 }
 

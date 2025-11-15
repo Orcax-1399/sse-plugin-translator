@@ -69,10 +69,35 @@ export default function ApiConfigPanel() {
     loadConfigs();
   }, [loadConfigs]);
 
-  // 当配置列表加载完成且没有选中配置时，自动选中第一个
+  // 当配置列表或选中ID变化时，同步formData
   useEffect(() => {
+    // 如果没有选中配置，且有配置列表，自动选中第一个
     if (configs.length > 0 && selectedConfigId === null) {
-      handleSelectConfig(configs[0]);
+      const firstConfig = configs[0];
+      setSelectedConfigId(firstConfig.id);
+      setFormData({
+        name: firstConfig.name || '',
+        endpoint: firstConfig.endpoint || '',
+        apiKey: firstConfig.apiKey || '',
+        modelName: firstConfig.modelName || '',
+        maxTokens: firstConfig.maxTokens || 2000,
+      });
+      setShowApiKey(false);
+      return;
+    }
+
+    // 如果已选中配置，同步更新formData
+    if (selectedConfigId !== null) {
+      const currentConfig = configs.find(c => c.id === selectedConfigId);
+      if (currentConfig) {
+        setFormData({
+          name: currentConfig.name || '',
+          endpoint: currentConfig.endpoint || '',
+          apiKey: currentConfig.apiKey || '',
+          modelName: currentConfig.modelName || '',
+          maxTokens: currentConfig.maxTokens || 2000,
+        });
+      }
     }
   }, [configs, selectedConfigId]);
 
@@ -80,11 +105,11 @@ export default function ApiConfigPanel() {
   const handleSelectConfig = (config: ApiConfig) => {
     setSelectedConfigId(config.id);
     setFormData({
-      name: config.name,
-      endpoint: config.endpoint,
-      apiKey: config.apiKey,
-      modelName: config.modelName,
-      maxTokens: config.maxTokens,
+      name: config.name || '',
+      endpoint: config.endpoint || '',
+      apiKey: config.apiKey || '',
+      modelName: config.modelName || '',
+      maxTokens: config.maxTokens || 2000,
     });
     setShowApiKey(false);
   };
@@ -323,7 +348,8 @@ export default function ApiConfigPanel() {
                 onChange={(e) => handleFieldChange('maxTokens', parseInt(e.target.value) || 2000)}
                 onBlur={() => handleFieldBlur('maxTokens')}
                 disabled={isLoading}
-                inputProps={{ min: 100, max: 100000 }}
+                inputProps={{ min: 100 }}
+                helperText="支持200k+上下文的模型（如GPT-4、Claude等）"
               />
 
               {/* Temperature（只读显示） */}
