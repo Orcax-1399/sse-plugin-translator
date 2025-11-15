@@ -4,6 +4,7 @@ mod translation_db;
 mod esp_service;
 mod plugin_session;
 mod atomic_db;
+mod api_manage;
 
 use settings::{Settings, read_settings, write_settings};
 use scanner::{PluginInfo, validate_game_path, scan_plugins};
@@ -11,6 +12,7 @@ use translation_db::{TranslationDB, Translation, FormIdentifier, TranslationStat
 use esp_service::{ExtractionStats, get_base_plugins, extract_base_dictionary};
 use plugin_session::{PluginSessionManager, PluginStringsResponse, SessionInfo, StringRecord};
 use atomic_db::{AtomicDB, AtomTranslation, AtomSource};
+use api_manage::{ApiConfigDB, ApiConfig};
 use std::sync::Mutex;
 use std::collections::HashMap;
 use serde::Serialize;
@@ -447,6 +449,73 @@ fn replace_text_with_atoms(
     Ok(db.replace_with_atoms(&text))
 }
 
+// ==================== API配置管理相关命令 ====================
+
+/// 获取所有API配置
+#[tauri::command]
+fn get_api_configs(
+    api_db: tauri::State<Mutex<ApiConfigDB>>,
+) -> Result<Vec<ApiConfig>, String> {
+    let db = api_db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+    db.get_all_configs()
+        .map_err(|e| format!("获取API配置失败: {}", e))
+}
+
+/// 创建新的API配置
+#[tauri::command]
+fn create_api_config(
+    api_db: tauri::State<Mutex<ApiConfigDB>>,
+    name: String,
+) -> Result<i64, String> {
+    let db = api_db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+    db.create_config(name)
+        .map_err(|e| format!("创建API配置失败: {}", e))
+}
+
+/// 更新API配置
+#[tauri::command]
+fn update_api_config(
+    api_db: tauri::State<Mutex<ApiConfigDB>>,
+    id: i64,
+    config: ApiConfig,
+) -> Result<(), String> {
+    let db = api_db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+    db.update_config(id, &config)
+        .map_err(|e| format!("更新API配置失败: {}", e))
+}
+
+/// 删除API配置
+#[tauri::command]
+fn delete_api_config(
+    api_db: tauri::State<Mutex<ApiConfigDB>>,
+    id: i64,
+) -> Result<(), String> {
+    let db = api_db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+    db.delete_config(id)
+        .map_err(|e| format!("删除API配置失败: {}", e))
+}
+
+/// 激活指定的API配置
+#[tauri::command]
+fn activate_api_config(
+    api_db: tauri::State<Mutex<ApiConfigDB>>,
+    id: i64,
+) -> Result<(), String> {
+    let db = api_db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+    db.activate_config(id)
+        .map_err(|e| format!("激活API配置失败: {}", e))
+}
+
+/// 获取当前激活的API配置
+#[tauri::command]
+fn get_current_api(
+    api_db: tauri::State<Mutex<ApiConfigDB>>,
+) -> Result<Option<ApiConfig>, String> {
+    let db = api_db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+    db.get_current_config()
+        .map_err(|e| format!("获取当前API配置失败: {}", e))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 初始化翻译数据库
@@ -459,6 +528,11 @@ pub fn run() {
     let atomic_db = AtomicDB::new(atomic_db_path.to_str().expect("路径转换失败"))
         .expect("无法初始化原子数据库");
 
+    // 初始化API配置数据库
+    let api_db_path = get_api_db_path();
+    let api_db = ApiConfigDB::new(api_db_path.to_str().expect("路径转换失败"))
+        .expect("无法初始化API配置数据库");
+
     // 初始化插件 Session 管理器
     let session_manager = PluginSessionManager::new();
 
@@ -470,6 +544,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(Mutex::new(translation_db))
         .manage(Mutex::new(atomic_db))
+        .manage(Mutex::new(api_db))
         .manage(Mutex::new(session_manager))
         .manage(editor_data_store)
         .invoke_handler(tauri::generate_handler![
@@ -498,7 +573,13 @@ pub fn run() {
             get_all_atoms,
             add_atom_translation,
             delete_atom_translation,
-            replace_text_with_atoms
+            replace_text_with_atoms,
+            get_api_configs,
+            create_api_config,
+            update_api_config,
+            delete_api_config,
+            activate_api_config,
+            get_current_api
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -552,4 +633,29 @@ fn get_atomic_db_path() -> std::path::PathBuf {
     }
 
     userdata_dir.join("atomic_translations.db")
+}
+
+/// 获取API配置数据库文件路径
+fn get_api_db_path() -> std::path::PathBuf {
+    let userdata_dir = if cfg!(debug_assertions) {
+        // 开发模式：项目根目录
+        std::env::current_dir()
+            .expect("无法获取当前目录")
+            .join("userdata")
+    } else {
+        // 生产模式：可执行文件同级目录
+        std::env::current_exe()
+            .expect("无法获取可执行文件路径")
+            .parent()
+            .expect("无法获取父目录")
+            .join("userdata")
+    };
+
+    // 确保userdata目录存在
+    if !userdata_dir.exists() {
+        std::fs::create_dir_all(&userdata_dir)
+            .expect("无法创建userdata目录");
+    }
+
+    userdata_dir.join("api.db")
 }

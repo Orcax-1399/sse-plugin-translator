@@ -25,8 +25,9 @@
 | 阶段19 | 前端闭包内存泄漏修复 | ✅ | 0.5h |
 | 阶段20 | Workspace组件架构重构 | ✅ | 1h |
 | 阶段21 | Zustand Store闭包内存泄漏修复 | ✅ | 0.5h |
+| 阶段22 | AI翻译API配置管理模块 | ✅ | 3h |
 
-**累计实际工时**: 59.5小时
+**累计实际工时**: 62.5小时
 
 ---
 
@@ -49,9 +50,10 @@
 - **前端闭包内存泄漏修复**（避免组件内函数捕获大对象）
 - **Workspace组件架构重构**（SOLID原则，单一职责）
 - **Zustand Store闭包内存泄漏修复**（selector精确订阅，getState动态读取）
+- **AI翻译API配置管理模块**（多配置管理、自动保存、唯一激活）
 
 ### 🚧 当前阶段
-**阶段21：Zustand Store闭包内存泄漏修复** - ✅ 已完成
+**阶段22：AI翻译API配置管理模块** - ✅ 已完成
 
 #### 问题分析
 - **表面症状**：`handleOpenAtomicDb` 等函数的闭包捕获 `openedSessions`
@@ -489,6 +491,100 @@ Workspace
 - ✅ 修复AtomicDbWindow的GridRowSelectionModel类型错误
 - ✅ 修复复合key冲突问题（同一form_id可能有多个record/subrecord组合）
 - ✅ 通过TypeScript类型检查（0 errors）
+
+---
+
+### 🚧 阶段22 详细说明
+**阶段22：AI翻译API配置管理模块**
+
+#### 核心功能
+- **多配置管理**：
+  - 支持创建多个API配置（OpenAI、Claude、自定义等）
+  - 每个配置包含：名称、端点、API Key、模型名称、Max Tokens
+  - Temperature固定为0.1（翻译任务高确定性）
+  - SQLite持久化存储（userdata/api.db）
+
+- **唯一激活机制**：
+  - 同一时间只能激活一个配置
+  - 激活时使用数据库事务确保原子性
+  - 自动取消其他配置的激活状态
+  - 提供`get_current_api()`获取当前配置
+
+- **自动保存**：
+  - 表单字段失去焦点（blur事件）自动更新数据库
+  - 实时同步配置列表
+  - 错误提示和加载状态
+
+#### 技术实现
+
+**后端实现（Rust）**：
+- 新增模块：`src-tauri/src/api_manage.rs`
+  - `ApiConfigDB` 数据库管理器
+  - SQLite表结构（自增ID、WAL模式）
+  - CRUD方法：get_all、create、update、delete、activate、get_current
+- Tauri命令注册：
+  - `get_api_configs` - 获取所有配置
+  - `create_api_config` - 创建配置
+  - `update_api_config` - 更新配置
+  - `delete_api_config` - 删除配置
+  - `activate_api_config` - 激活配置
+  - `get_current_api` - 获取当前激活配置
+
+**前端实现（TypeScript/React）**：
+- 新增Store：`src/stores/apiConfigStore.ts`
+  - Zustand状态管理
+  - 完整的API调用封装
+  - 错误处理和Loading状态
+- UI改造：`src/components/SettingsModal.tsx`
+  - 改造为3个Tab布局：
+    - Tab 0: 词典提取（原有功能）
+    - Tab 1: AI配置（新增）
+    - Tab 2: 通用设置（预留）
+- 新增组件：`src/components/ApiConfigPanel.tsx`
+  - 左侧配置列表（Radio激活、删除按钮）
+  - 右侧编辑区（名称、端点、API Key、模型、Max Tokens）
+  - 添加/删除确认对话框
+  - API Key显示/隐藏切换
+
+#### 数据库设计
+```sql
+CREATE TABLE api_configs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    api_key TEXT NOT NULL,
+    model_name TEXT NOT NULL,
+    max_tokens INTEGER NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX idx_api_is_active ON api_configs(is_active);
+```
+
+#### 修改文件
+- 新增：`src-tauri/src/api_manage.rs`（209行）
+- 新增：`src/stores/apiConfigStore.ts`（187行）
+- 新增：`src/components/ApiConfigPanel.tsx`（370行）
+- 修改：`src-tauri/src/lib.rs`（新增6个命令，数据库初始化）
+- 修改：`src/components/SettingsModal.tsx`（Tab布局改造）
+
+#### 验证结果
+- ✅ Rust后端编译通过（cargo check）
+- ✅ 所有Tauri命令注册成功
+- ✅ 数据库初始化逻辑正确
+- ✅ 前端组件结构完整
+
+#### 遵循原则
+- **KISS**：使用JSON明文存储API Key，简单直接
+- **YAGNI**：暂不实现连接测试功能
+- **DRY**：复用现有Settings架构和数据库模式
+- **用户体验**：自动保存、确认对话框、错误提示
+
+#### 成果价值
+- **可扩展性**：为AI翻译功能奠定基础
+- **用户友好**：多配置切换，支持不同场景
+- **架构一致**：遵循现有数据库和Store模式
 
 ---
 

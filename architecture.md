@@ -113,6 +113,32 @@ fn increment_usage_async()    // 异步更新使用计数
 // 4. 统计：异步更新usage_count
 ```
 
+#### 7. API配置管理 (`api_manage.rs`)
+```rust
+// 核心结构
+struct ApiConfigDB { conn: Arc<Mutex<Connection>> }
+
+struct ApiConfig {
+    id, name, endpoint, api_key,
+    model_name, max_tokens,
+    is_active, created_at, updated_at
+}
+
+// 主要方法
+fn new(db_path)               // 初始化数据库（WAL模式）
+fn get_all_configs()          // 获取所有配置
+fn create_config(name)        // 创建默认配置
+fn update_config(id, config)  // 更新配置
+fn delete_config(id)          // 删除配置
+fn activate_config(id)        // 激活配置（事务保证唯一性）
+fn get_current_config()       // 获取当前激活配置
+
+// 特性
+// - 唯一激活约束：activate时自动取消其他配置
+// - 事务保证：BEGIN → 全部设为0 → 激活指定ID → COMMIT
+// - 明文存储：API Key不加密（依赖文件系统安全）
+```
+
 ---
 
 ### 前端模块 (TypeScript/React)
@@ -151,6 +177,22 @@ interface TranslationState {
 showSuccess(), showError(), showWarning(), showInfo()
 ```
 
+**apiConfigStore.ts** - API配置管理
+```typescript
+interface ApiConfigState {
+    configs: ApiConfig[]          // 所有配置列表
+    currentApi: ApiConfig | null  // 当前激活的配置
+    isLoading, error
+
+    loadConfigs()                 // 加载所有配置
+    createConfig(name)            // 创建新配置
+    updateConfig(id, config)      // 更新配置（自动保存）
+    deleteConfig(id)              // 删除配置
+    activateConfig(id)            // 激活配置
+    refreshCurrentApi()           // 刷新当前激活配置
+}
+```
+
 #### 2. 核心组件 (`components/`)
 
 - **StringTable.tsx** - 翻译表格（MUI DataGrid）
@@ -158,7 +200,8 @@ showSuccess(), showError(), showWarning(), showInfo()
 - **SessionTabBar.tsx** - Tab切换栏
 - **EditorWindow.tsx** - 独立编辑窗口（CodeMirror）
 - **TranslationReferencePanel.tsx** - 参考翻译面板
-- **SettingsModal.tsx** - 设置对话框
+- **SettingsModal.tsx** - 设置对话框（3个Tab：词典提取/AI配置/通用设置）
+- **ApiConfigPanel.tsx** - AI配置面板（配置列表+编辑区）
 - **BatchApplyConfirmModal.tsx** - 批量应用确认
 
 #### 3. 页面组件 (`pages/`)
@@ -411,10 +454,11 @@ src-tauri/userdata/
 ├── settings.json             # 用户配置
 ├── translations.db           # 翻译数据库
 ├── translations.db-wal       # WAL日志
-└── atomic_translations.db    # 原子数据库 (新增)
+├── atomic_translations.db    # 原子数据库
+└── api.db                    # API配置数据库 (新增)
 ```
 
 ---
 
 **文档版本**: v0.1.0
-**最后更新**: 2025-11-14
+**最后更新**: 2025-11-15

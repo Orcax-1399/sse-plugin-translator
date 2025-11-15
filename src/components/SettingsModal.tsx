@@ -15,11 +15,14 @@ import {
   ListItemText,
   Divider,
   IconButton,
+  Tabs,
+  Tab,
 } from '@mui/material';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { useTranslationStore } from '../stores/translationStore';
 import type { ExtractionStats } from '../types';
+import ApiConfigPanel from './ApiConfigPanel';
 
 interface SettingsModalProps {
   /** 是否打开弹窗 */
@@ -32,6 +35,9 @@ interface SettingsModalProps {
  * 设置模态框组件
  */
 export default function SettingsModal({ open, onClose }: SettingsModalProps) {
+  // Tab状态管理
+  const [currentTab, setCurrentTab] = useState(0);
+
   const [dataDir, setDataDir] = useState('');
   const [isExtracting, setIsExtracting] = useState(false);
   const [extractionResult, setExtractionResult] = useState<ExtractionStats | null>(null);
@@ -113,8 +119,14 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
     }
   };
 
+  // 切换Tab
+  const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
+    setCurrentTab(newValue);
+  };
+
   // 关闭弹窗时重置状态
   const handleClose = () => {
+    setCurrentTab(0);
     setDataDir('');
     setExtractionResult(null);
     setExtractionError(null);
@@ -138,9 +150,20 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
       fullWidth
       onTransitionEnter={handleOpen}
     >
-      <DialogTitle>原始字典提取设置</DialogTitle>
+      <DialogTitle>
+        <Box>
+          <Typography variant="h6" sx={{ mb: 2 }}>设置</Typography>
+          <Tabs value={currentTab} onChange={handleTabChange}>
+            <Tab label="词典提取" />
+            <Tab label="AI配置" />
+            <Tab label="通用设置" />
+          </Tabs>
+        </Box>
+      </DialogTitle>
 
       <DialogContent>
+        {/* Tab 0: 词典提取 */}
+        {currentTab === 0 && (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3, pt: 1 }}>
           {/* 目录选择 */}
           <Box>
@@ -271,6 +294,19 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
             </Typography>
           </Box>
         </Box>
+        )}
+
+        {/* Tab 1: AI配置 */}
+        {currentTab === 1 && <ApiConfigPanel />}
+
+        {/* Tab 2: 通用设置 */}
+        {currentTab === 2 && (
+          <Box sx={{ p: 2, textAlign: 'center', color: 'text.secondary' }}>
+            <Typography variant="body1">
+              通用设置面板（预留）
+            </Typography>
+          </Box>
+        )}
       </DialogContent>
 
       <Divider />
