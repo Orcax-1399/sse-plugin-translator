@@ -34,7 +34,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   translationProgress: new Map(),
   isLoading: false,
   error: null,
-  // ✅ 跟踪未保存的修改（Map: session_id -> Set<form_id>）
+  // ✅ 跟踪未保存的修改（Map: session_id -> Set<record_id>）
+  // record_id 格式："form_id|record_type|subrecord_type"（与 selectedRows 保持一致）
   pendingChanges: new Map(),
   // ✅ 筛选状态（Map: session_id -> filter status）
   filterStatus: new Map(),
@@ -371,15 +372,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }
     });
 
+    // ✅ 生成复合 key（在 set 之前，便于日志使用）
+    const recordId = `${formId}|${recordType}|${subrecordType}`;
+
     // 更新 Session 数据
     set((state) => {
       const newSessions = new Map(state.openedSessions);
       newSessions.set(sessionId, updatedSession);
 
-      // ✅ 标记为待保存
+      // ✅ 标记为待保存（使用复合 key）
       const newPendingChanges = new Map(state.pendingChanges);
       const changes = newPendingChanges.get(sessionId) || new Set<string>();
-      changes.add(formId);
+      changes.add(recordId);
       newPendingChanges.set(sessionId, changes);
 
       return {
@@ -388,7 +392,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       };
     });
 
-    console.log(`✓ 已更新记录: ${formId} (${sessionId})`);
+    console.log(`✓ 已更新记录: ${recordId} (${sessionId})`);
   },
 
   /**
@@ -468,8 +472,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }
 
       for (const record of session.strings) {
-        // ✅ 只保存在 pendingChanges 中的记录
-        if (changedFormIds.has(record.form_id)) {
+        // ✅ 使用复合 key 检查是否需要保存
+        const recordId = `${record.form_id}|${record.record_type}|${record.subrecord_type}`;
+        if (changedFormIds.has(recordId)) {
           const now = Math.floor(Date.now() / 1000);
 
           translationsToSave.push({
@@ -568,8 +573,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const translationsToSave: Translation[] = [];
 
     for (const record of session.strings) {
-      // ✅ 只保存在 pendingChanges 中的记录
-      if (changedFormIds.has(record.form_id)) {
+      // ✅ 使用复合 key 检查是否需要保存
+      const recordId = `${record.form_id}|${record.record_type}|${record.subrecord_type}`;
+      if (changedFormIds.has(recordId)) {
         const now = Math.floor(Date.now() / 1000);
 
         translationsToSave.push({
