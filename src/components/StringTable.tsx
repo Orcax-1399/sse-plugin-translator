@@ -1,9 +1,10 @@
 import { useMemo, memo } from 'react';
-import { DataGrid, GridColDef, GridRowParams } from '@mui/x-data-grid';
+import { DataGrid, GridColDef, GridRowParams, GridRowSelectionModel } from '@mui/x-data-grid';
 import { Box } from '@mui/material';
 import { invoke } from '@tauri-apps/api/core';
 import type { StringRecord } from '../types';
 import { showError } from '../stores/notificationStore';
+import { useSessionStore } from '../stores/sessionStore';
 
 interface StringTableProps {
   /** 字符串记录列表 */
@@ -18,8 +19,34 @@ interface StringTableProps {
  * 显示插件的字符串数据，支持列宽调整和虚拟滚动
  *
  * ✅ 使用 React.memo 包装，避免不必要的重渲染
+ * ✅ 使用 selector 精确订阅，避免引用整个 store 对象
  */
 const StringTable = memo(function StringTable({ rows, sessionId }: StringTableProps) {
+  // ✅ 使用 selector 精确订阅状态和方法
+  const selectedRows = useSessionStore((state) => state.selectedRows);
+  const setSelectedRows = useSessionStore((state) => state.setSelectedRows);
+
+  // 获取当前session的选中行
+  // rowId格式："form_id|record_type|subrecord_type"
+  const selectedRowIds: GridRowSelectionModel = useMemo(() => {
+    if (!sessionId || !selectedRows) {
+      return { type: 'include', ids: new Set() };
+    }
+    const selectedSet = selectedRows.get(sessionId) || new Set<string>();
+    return { type: 'include', ids: selectedSet };
+  }, [sessionId, selectedRows]);
+
+  // 处理行选择变化
+  // 将选中的rowId（"form_id|record_type|subrecord_type"）存储到session state
+  const handleRowSelectionChange = (newSelection: GridRowSelectionModel) => {
+    if (!sessionId || !setSelectedRows) return;
+
+    // GridRowSelectionModel 在v8中是 { type, ids } 结构
+    const selectedSet = new Set<string>();
+    newSelection.ids.forEach(id => selectedSet.add(String(id)));
+    setSelectedRows(sessionId, selectedSet);
+  };
+
   // 定义列（按需求顺序）
   const columns: GridColDef[] = [
     {
@@ -60,13 +87,6 @@ const StringTable = memo(function StringTable({ rows, sessionId }: StringTablePr
     },
   ];
 
-  // ✅ 使用 useMemo 缓存计算结果（防止重渲染时重新创建数组）
-  const rowsWithId = useMemo(() => {
-    return rows.map((row, index) => ({
-      id: index, // 使用索引作为唯一 ID
-      ...row,
-    }));
-  }, [rows]);
 
   // 双击行打开编辑窗口
   const handleRowDoubleClick = (params: GridRowParams) => {
@@ -93,14 +113,18 @@ const StringTable = memo(function StringTable({ rows, sessionId }: StringTablePr
     >
       <DataGrid
         key={sessionId} // ✅ 强制在 session 切换时重新挂载，确保旧缓存释放
-        rows={rowsWithId}
+        rows={rows}
         columns={columns}
+        getRowId={(row) => `${row.form_id}|${row.record_type}|${row.subrecord_type}`} // ✅ 使用复合key作为唯一标识
         initialState={{
           pagination: {
             paginationModel: { pageSize: 50 },
           },
         }}
         pageSizeOptions={[25, 50, 100]}
+        checkboxSelection // ✅ 启用复选框选择
+        rowSelectionModel={selectedRowIds} // ✅ 当前选中的行
+        onRowSelectionModelChange={handleRowSelectionChange} // ✅ 处理选择变化
         disableRowSelectionOnClick
         onRowDoubleClick={handleRowDoubleClick}
         getRowClassName={(params) => {

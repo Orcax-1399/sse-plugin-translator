@@ -15,7 +15,7 @@ import {
   Alert,
   Snackbar,
 } from '@mui/material';
-import { DataGrid, GridColDef, GridRowsProp } from '@mui/x-data-grid';
+import { DataGrid, GridColDef, GridRowsProp, GridRowSelectionModel } from '@mui/x-data-grid';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import CloseIcon from '@mui/icons-material/Close';
@@ -38,7 +38,11 @@ export default function AtomicDbWindow() {
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [newOriginal, setNewOriginal] = useState('');
   const [newTranslated, setNewTranslated] = useState('');
-  const [selectedRows, setSelectedRows] = useState<number[]>([]);
+  // ✅ 使用GridRowSelectionModel v8格式
+  const [selectedRowsModel, setSelectedRowsModel] = useState<GridRowSelectionModel>({
+    type: 'include',
+    ids: new Set(),
+  });
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
     open: false,
     message: '',
@@ -98,15 +102,15 @@ export default function AtomicDbWindow() {
 
   // 删除选中的原子翻译
   const handleDeleteSelected = async () => {
-    if (selectedRows.length === 0) {
+    if (selectedRowsModel.ids.size === 0) {
       showSnackbar('请先选择要删除的条目', 'error');
       return;
     }
 
     try {
       // 批量删除
-      for (const id of selectedRows) {
-        const atom = atoms.find((a) => a.id === id);
+      for (const id of selectedRowsModel.ids) {
+        const atom = atoms.find((a) => a.id === Number(id));
         if (atom) {
           await invoke('delete_atom_translation', {
             original: atom.original,
@@ -114,8 +118,8 @@ export default function AtomicDbWindow() {
         }
       }
 
-      showSnackbar(`成功删除 ${selectedRows.length} 条记录`, 'success');
-      setSelectedRows([]);
+      showSnackbar(`成功删除 ${selectedRowsModel.ids.size} 条记录`, 'success');
+      setSelectedRowsModel({ type: 'include', ids: new Set() });
       loadAtoms(); // 重新加载数据
     } catch (error) {
       showSnackbar('删除失败: ' + String(error), 'error');
@@ -222,9 +226,9 @@ export default function AtomicDbWindow() {
             color="error"
             startIcon={<DeleteIcon />}
             onClick={handleDeleteSelected}
-            disabled={selectedRows.length === 0}
+            disabled={selectedRowsModel.ids.size === 0}
           >
-            删除选中 ({selectedRows.length})
+            删除选中 ({selectedRowsModel.ids.size})
           </Button>
         </Box>
 
@@ -238,6 +242,7 @@ export default function AtomicDbWindow() {
             disableRowSelectionOnClick
             density="compact"
             pageSizeOptions={[25, 50, 100]}
+            rowSelectionModel={selectedRowsModel}
             initialState={{
               pagination: { paginationModel: { pageSize: 50 } },
               sorting: {
@@ -245,7 +250,7 @@ export default function AtomicDbWindow() {
               },
             }}
             onRowSelectionModelChange={(newSelection) => {
-              setSelectedRows(newSelection as number[]);
+              setSelectedRowsModel(newSelection);
             }}
             sx={{
               '& .MuiDataGrid-cell:focus': {

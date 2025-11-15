@@ -1,11 +1,11 @@
-import { Box, Typography, Paper, IconButton, LinearProgress, Fade, Tooltip, Button, Badge } from '@mui/material';
+import { Box, Typography, Paper, IconButton, LinearProgress, Fade, Tooltip, Button, Badge, Chip } from '@mui/material';
 import InfoIcon from '@mui/icons-material/Info';
 import SaveIcon from '@mui/icons-material/Save';
 import type { PluginStringsResponse } from '../types';
 import StringTable from './StringTable';
 import { useSessionStore } from '../stores/sessionStore';
 import { showSuccess, showError } from '../stores/notificationStore';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 
 interface SessionPanelProps {
   /** Session 数据 */
@@ -18,10 +18,17 @@ interface SessionPanelProps {
  * 显示单个插件 Session 的内容：
  * - 顶部状态栏（动态高度，包含进度信息）
  * - 字符串表格（占满剩余空间）
+ *
+ * ✅ 使用 selector 精确订阅，避免引用整个 store 对象
  */
 export default function SessionPanel({ sessionData }: SessionPanelProps) {
+  // ✅ 使用 selector 精确订阅状态和方法
   const translationProgress = useSessionStore((state) => state.translationProgress);
-  const { getSessionPendingCount, saveSessionTranslations } = useSessionStore();
+  const getSessionPendingCount = useSessionStore((state) => state.getSessionPendingCount);
+  const saveSessionTranslations = useSessionStore((state) => state.saveSessionTranslations);
+  const getFilterStatus = useSessionStore((state) => state.getFilterStatus);
+  const setFilterStatus = useSessionStore((state) => state.setFilterStatus);
+
   const progress = translationProgress.get(sessionData.session_id);
   const [showInfo, setShowInfo] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -31,6 +38,24 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
 
   // 获取当前 session 的未保存数量
   const pendingCount = getSessionPendingCount ? getSessionPendingCount(sessionData.session_id) : 0;
+
+  // 获取当前筛选状态
+  const currentFilter = getFilterStatus ? getFilterStatus(sessionData.session_id) : 'all';
+
+  // 根据筛选状态过滤数据
+  const filteredStrings = useMemo(() => {
+    if (currentFilter === 'all') {
+      return sessionData.strings;
+    }
+    return sessionData.strings.filter((s) => s.translation_status === currentFilter);
+  }, [sessionData.strings, currentFilter]);
+
+  // 处理筛选状态变更
+  const handleFilterChange = (status: 'all' | 'untranslated' | 'manual' | 'ai') => {
+    if (setFilterStatus) {
+      setFilterStatus(sessionData.session_id, status);
+    }
+  };
 
   // 保存当前 session 的翻译
   const handleSaveTranslations = async () => {
@@ -67,11 +92,46 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
           py: 1,
         }}
       >
-        {/* 第一行：总计 + 保存按钮 + 信息按钮 */}
+        {/* 第一行：总计 + 筛选Chips + 保存按钮 + 信息按钮 */}
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: isLoadingTranslations ? 1 : 0 }}>
           <Typography variant="body2" color="text.secondary">
-            总计: <strong>{sessionData.total_count}</strong> 条字符串
+            总计: <strong>{sessionData.total_count}</strong> 条
+            {currentFilter !== 'all' && (
+              <span> · 筛选: <strong>{filteredStrings.length}</strong> 条</span>
+            )}
           </Typography>
+
+          {/* 筛选Chips */}
+          <Box sx={{ display: 'flex', gap: 0.5, ml: 2 }}>
+            <Chip
+              label="全部"
+              size="small"
+              variant={currentFilter === 'all' ? 'filled' : 'outlined'}
+              color={currentFilter === 'all' ? 'primary' : 'default'}
+              onClick={() => handleFilterChange('all')}
+            />
+            <Chip
+              label="未翻译"
+              size="small"
+              variant={currentFilter === 'untranslated' ? 'filled' : 'outlined'}
+              color={currentFilter === 'untranslated' ? 'primary' : 'default'}
+              onClick={() => handleFilterChange('untranslated')}
+            />
+            <Chip
+              label="已翻译"
+              size="small"
+              variant={currentFilter === 'manual' ? 'filled' : 'outlined'}
+              color={currentFilter === 'manual' ? 'primary' : 'default'}
+              onClick={() => handleFilterChange('manual')}
+            />
+            <Chip
+              label="AI翻译"
+              size="small"
+              variant={currentFilter === 'ai' ? 'filled' : 'outlined'}
+              color={currentFilter === 'ai' ? 'primary' : 'default'}
+              onClick={() => handleFilterChange('ai')}
+            />
+          </Box>
 
           {/* 保存翻译按钮 */}
           <Badge badgeContent={pendingCount} color="error" sx={{ ml: 'auto' }}>
@@ -128,7 +188,7 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
 
       {/* 表格区域（占满剩余空间） */}
       <Box sx={{ flex: 1, overflow: 'hidden' }}>
-        <StringTable rows={sessionData.strings} sessionId={sessionData.session_id} />
+        <StringTable rows={filteredStrings} sessionId={sessionData.session_id} />
       </Box>
     </Box>
   );

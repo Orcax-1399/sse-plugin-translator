@@ -1,14 +1,14 @@
-import { create } from 'zustand';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
-import { produce } from 'immer';
+import { create } from "zustand";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { produce } from "immer";
 import type {
   PluginStringsResponse,
   SessionState,
   FormIdentifier,
   Translation,
-  TranslationProgressPayload
-} from '../types';
+  TranslationProgressPayload,
+} from "../types";
 
 /**
  * 翻译更新事件 Payload
@@ -36,6 +36,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   error: null,
   // ✅ 跟踪未保存的修改（Map: session_id -> Set<form_id>）
   pendingChanges: new Map(),
+  // ✅ 筛选状态（Map: session_id -> filter status）
+  filterStatus: new Map(),
+  // ✅ 行选择状态（Map: session_id -> Set<row_id>，row_id = "form_id|record_type|subrecord_type"）
+  selectedRows: new Map(),
 
   /**
    * 打开插件 Session
@@ -46,7 +50,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const { checkSessionExists, refreshTranslations } = get();
 
     // 提取插件名称
-    const pluginName = pluginPath.split(/[/\\]/).pop() || '';
+    const pluginName = pluginPath.split(/[/\\]/).pop() || "";
 
     // 检查是否已打开
     if (checkSessionExists(pluginName)) {
@@ -60,11 +64,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     try {
       // 调用后端命令加载插件
       const response = await invoke<PluginStringsResponse>(
-        'load_plugin_session',
-        { pluginPath }
+        "load_plugin_session",
+        { pluginPath },
       );
 
-      console.log(`✓ 成功加载 Session: ${response.session_id}, ${response.total_count} 条字符串`);
+      console.log(
+        `✓ 成功加载 Session: ${response.session_id}, ${response.total_count} 条字符串`,
+      );
 
       // ✅ 直接使用后端数据（后端已初始化 translation_status）
       // 避免在前端创建新数组，节省内存
@@ -82,11 +88,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       // 自动触发翻译刷新（异步，不阻塞）
       console.log(`🔄 开始自动刷新翻译: ${response.session_id}`);
       refreshTranslations(response.session_id).catch((err) => {
-        console.error('自动刷新翻译失败:', err);
+        console.error("自动刷新翻译失败:", err);
       });
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      console.error('加载 Session 失败:', errorMsg);
+      console.error("加载 Session 失败:", errorMsg);
       set({ error: errorMsg, isLoading: false });
     }
   },
@@ -98,39 +104,69 @@ export const useSessionStore = create<SessionState>((set, get) => ({
    */
   closeSession: async (sessionId: string) => {
     set({ isLoading: true, error: null });
+    console.log(useSessionStore.getState().openedSessions);
 
     try {
       // 调用后端命令关闭 Session
-      await invoke('close_plugin_session', { sessionId });
+      await invoke("close_plugin_session", { sessionId });
 
       console.log(`✓ 成功关闭 Session: ${sessionId}`);
 
       // 更新状态并清理所有相关数据
       set((state) => {
-        const newSessions = new Map(state.openedSessions);
-        newSessions.delete(sessionId);
+        // ⚠️ 关键修复：Map.delete() 只是逻辑删除，V8 内部哈希表仍可能保留引用
+        // 必须重建新 Map 以确保旧数据完全不可达
+        const tmpSessions = new Map(state.openedSessions);
+        tmpSessions.delete(sessionId);
+        // 重建 Map，丢弃旧 Map 的内部 table
+        const newSessions =
+          tmpSessions.size > 0 ? new Map(tmpSessions) : new Map();
 
         // ✅ 同时清理进度数据（防止内存泄漏）
         const newProgress = new Map(state.translationProgress);
         newProgress.delete(sessionId);
 
+        // ✅ 清理筛选状态
+        const newFilterStatus = new Map(state.filterStatus);
+        newFilterStatus.delete(sessionId);
+
+        // ✅ 清理行选择状态
+        const newSelectedRows = new Map(state.selectedRows);
+        newSelectedRows.delete(sessionId);
+
+        // ✅ 清理待保存修改
+        const newPendingChanges = new Map(state.pendingChanges);
+        newPendingChanges.delete(sessionId);
+
         // 如果关闭的是当前激活的 Session，切换到其他 Session 或 null
         let newActiveSessionId = state.activeSessionId;
         if (newActiveSessionId === sessionId) {
           const remainingSessions = Array.from(newSessions.keys());
-          newActiveSessionId = remainingSessions.length > 0 ? remainingSessions[0] : null;
+          newActiveSessionId =
+            remainingSessions.length > 0 ? remainingSessions[0] : null;
         }
+        console.log("[closeSession] openedSessions", newSessions.size);
+        console.log(
+          "[closeSession] total strings",
+          [...newSessions.values()].reduce(
+            (sum, s) => sum + s.strings.length,
+            0,
+          ),
+        );
 
         return {
           openedSessions: newSessions,
           translationProgress: newProgress,
+          filterStatus: newFilterStatus,
+          selectedRows: newSelectedRows,
+          pendingChanges: newPendingChanges,
           activeSessionId: newActiveSessionId,
           isLoading: false,
         };
       });
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      console.error('关闭 Session 失败:', errorMsg);
+      console.error("关闭 Session 失败:", errorMsg);
       set({ error: errorMsg, isLoading: false });
     }
   },
@@ -176,7 +212,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return;
     }
 
-    console.log(`开始刷新翻译: ${sessionId}, 共 ${session.total_count} 条字符串`);
+    console.log(
+      `开始刷新翻译: ${sessionId}, 共 ${session.total_count} 条字符串`,
+    );
 
     // ✅ 使用 Map 暂存翻译数据（需要在 finally 中清理）
     let translationMap: Map<string, string> | null = null;
@@ -191,11 +229,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       // 2. 批量查询翻译（带进度通知）
       const translations = await invoke<Translation[]>(
-        'batch_query_translations_with_progress',
+        "batch_query_translations_with_progress",
         {
           sessionId,
           forms,
-        }
+        },
       );
 
       console.log(`✓ 查询到 ${translations.length} 条翻译`);
@@ -215,9 +253,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
           if (translatedText) {
             s.translated_text = translatedText;
-            s.translation_status = 'manual';
+            s.translation_status = "manual";
           } else {
-            s.translation_status = 'untranslated';
+            s.translation_status = "untranslated";
           }
         });
       });
@@ -240,7 +278,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       console.log(`✓ 刷新翻译完成: 应用了 ${translations.length} 条翻译`);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      console.error('刷新翻译失败:', errorMsg);
+      console.error("刷新翻译失败:", errorMsg);
       set({ error: errorMsg });
 
       // 清除进度状态
@@ -265,7 +303,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
    */
   initEventListener: async () => {
     const unlisten = await listen<TranslationProgressPayload>(
-      'translation_progress',
+      "translation_progress",
       (event) => {
         const { session_id, percentage } = event.payload;
 
@@ -274,7 +312,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           newProgress.set(session_id, percentage);
           return { translationProgress: newProgress };
         });
-      }
+      },
     );
 
     // 返回清理函数
@@ -308,7 +346,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     recordType: string,
     subrecordType: string,
     translatedText: string,
-    translationStatus: string
+    translationStatus: string,
   ) => {
     const { openedSessions } = get();
     const session = openedSessions.get(sessionId);
@@ -321,7 +359,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     // ✅ 使用 Immer 原地更新，避免创建新数组
     const updatedSession = produce(session, (draft) => {
       const record = draft.strings.find(
-        (s) => s.form_id === formId && s.record_type === recordType && s.subrecord_type === subrecordType
+        (s) =>
+          s.form_id === formId &&
+          s.record_type === recordType &&
+          s.subrecord_type === subrecordType,
       );
 
       if (record) {
@@ -357,26 +398,43 @@ export const useSessionStore = create<SessionState>((set, get) => ({
    */
   initEditorEventListener: async () => {
     const unlisten = await listen<TranslationUpdatedPayload>(
-      'translation-updated',
+      "translation-updated",
       (event) => {
-        const { form_id, record_type, subrecord_type, translated_text, translation_status } = event.payload;
+        const {
+          form_id,
+          record_type,
+          subrecord_type,
+          translated_text,
+          translation_status,
+        } = event.payload;
 
         // 查找对应的 Session（遍历所有打开的 Session）
-        const { openedSessions, updateStringRecord } = useSessionStore.getState();
+        const { openedSessions, updateStringRecord } =
+          useSessionStore.getState();
 
         for (const [sessionId, session] of openedSessions.entries()) {
           const record = session.strings.find(
-            (s) => s.form_id === form_id && s.record_type === record_type && s.subrecord_type === subrecord_type
+            (s) =>
+              s.form_id === form_id &&
+              s.record_type === record_type &&
+              s.subrecord_type === subrecord_type,
           );
 
           if (record && updateStringRecord) {
             // 找到对应的 Session，更新记录
-            updateStringRecord(sessionId, form_id, record_type, subrecord_type, translated_text, translation_status);
+            updateStringRecord(
+              sessionId,
+              form_id,
+              record_type,
+              subrecord_type,
+              translated_text,
+              translation_status,
+            );
             console.log(`✓ 编辑窗口更新已应用: ${form_id} (${sessionId})`);
             break;
           }
         }
-      }
+      },
     );
 
     return () => {
@@ -395,7 +453,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const { openedSessions, pendingChanges } = get();
 
     if (!pendingChanges || pendingChanges.size === 0) {
-      console.log('没有未保存的修改');
+      console.log("没有未保存的修改");
       return 0;
     }
 
@@ -430,7 +488,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
 
     if (translationsToSave.length === 0) {
-      console.log('没有需要保存的翻译');
+      console.log("没有需要保存的翻译");
       return 0;
     }
 
@@ -438,7 +496,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     try {
       // 调用后端批量保存接口
-      await invoke('batch_save_translations', {
+      await invoke("batch_save_translations", {
         translations: translationsToSave,
       });
 
@@ -450,7 +508,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return translationsToSave.length;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      console.error('批量保存翻译失败:', errorMsg);
+      console.error("批量保存翻译失败:", errorMsg);
       throw new Error(errorMsg);
     }
   },
@@ -533,15 +591,19 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return 0;
     }
 
-    console.log(`Session ${sessionId}: 开始保存翻译 ${translationsToSave.length} 条`);
+    console.log(
+      `Session ${sessionId}: 开始保存翻译 ${translationsToSave.length} 条`,
+    );
 
     try {
       // 调用后端批量保存接口
-      await invoke('batch_save_translations', {
+      await invoke("batch_save_translations", {
         translations: translationsToSave,
       });
 
-      console.log(`✓ Session ${sessionId}: 保存成功 ${translationsToSave.length} 条`);
+      console.log(
+        `✓ Session ${sessionId}: 保存成功 ${translationsToSave.length} 条`,
+      );
 
       // ✅ 清空该 session 的 pendingChanges
       if (pendingChanges && pendingChanges.has(sessionId)) {
@@ -556,5 +618,73 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       console.error(`Session ${sessionId}: 保存翻译失败:`, errorMsg);
       throw new Error(errorMsg);
     }
+  },
+
+  /**
+   * 设置筛选状态
+   *
+   * @param sessionId - Session ID
+   * @param status - 筛选状态
+   */
+  setFilterStatus: (
+    sessionId: string,
+    status: "all" | "untranslated" | "manual" | "ai",
+  ) => {
+    set((state) => {
+      const newFilterStatus = new Map(state.filterStatus);
+      newFilterStatus.set(sessionId, status);
+      return { filterStatus: newFilterStatus };
+    });
+  },
+
+  /**
+   * 获取筛选状态
+   *
+   * @param sessionId - Session ID
+   * @returns 筛选状态（默认为 'all'）
+   */
+  getFilterStatus: (
+    sessionId: string,
+  ): "all" | "untranslated" | "manual" | "ai" => {
+    const { filterStatus } = get();
+    return filterStatus?.get(sessionId) || "all";
+  },
+
+  /**
+   * 设置选中的行
+   *
+   * @param sessionId - Session ID
+   * @param rowIds - 行ID集合（格式："form_id|record_type|subrecord_type"）
+   */
+  setSelectedRows: (sessionId: string, rowIds: Set<string>) => {
+    set((state) => {
+      const newSelectedRows = new Map(state.selectedRows);
+      newSelectedRows.set(sessionId, rowIds);
+      return { selectedRows: newSelectedRows };
+    });
+  },
+
+  /**
+   * 清空选中的行
+   *
+   * @param sessionId - Session ID
+   */
+  clearSelectedRows: (sessionId: string) => {
+    set((state) => {
+      const newSelectedRows = new Map(state.selectedRows);
+      newSelectedRows.delete(sessionId);
+      return { selectedRows: newSelectedRows };
+    });
+  },
+
+  /**
+   * 获取选中的行
+   *
+   * @param sessionId - Session ID
+   * @returns 行ID集合（格式："form_id|record_type|subrecord_type"）
+   */
+  getSelectedRows: (sessionId: string): Set<string> => {
+    const { selectedRows } = get();
+    return selectedRows?.get(sessionId) || new Set<string>();
   },
 }));
