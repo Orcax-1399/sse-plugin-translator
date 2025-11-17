@@ -1,11 +1,14 @@
-import { Box, Typography, Paper, IconButton, LinearProgress, Fade, Tooltip, Button, Badge, Chip } from '@mui/material';
+import { Box, Typography, Paper, IconButton, LinearProgress, Fade, Tooltip, Button, Badge, Chip, Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions } from '@mui/material';
 import InfoIcon from '@mui/icons-material/Info';
 import SaveIcon from '@mui/icons-material/Save';
+import TranslateIcon from '@mui/icons-material/Translate';
 import type { PluginStringsResponse } from '../types';
 import StringTable from './StringTable';
 import { useSessionStore } from '../stores/sessionStore';
-import { showSuccess, showError } from '../stores/notificationStore';
-import { useState, useMemo } from 'react';
+import { useApiConfigStore } from '../stores/apiConfigStore';
+import { showSuccess, showError, showInfo as showInfoNotification } from '../stores/notificationStore';
+import { useState, useMemo, useRef } from 'react';
+import { translateBatchWithAI, createCancellationToken, type TranslationEntry, type CancellationToken } from '../utils/aiTranslation';
 
 interface SessionPanelProps {
   /** Session 数据 */
@@ -26,21 +29,40 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
   const translationProgress = useSessionStore((state) => state.translationProgress);
   const getSessionPendingCount = useSessionStore((state) => state.getSessionPendingCount);
   const saveSessionTranslations = useSessionStore((state) => state.saveSessionTranslations);
-  const getFilterStatus = useSessionStore((state) => state.getFilterStatus);
   const setFilterStatus = useSessionStore((state) => state.setFilterStatus);
+  const updateStringRecord = useSessionStore((state) => state.updateStringRecord);
+
+  // ✅ 使用selector订阅selectedRows的size，避免无限循环
+  const selectedCount = useSessionStore(
+    (state) => state.selectedRows?.get(sessionData.session_id)?.size || 0
+  );
+
+  // ✅ 使用selector订阅filterStatus，确保响应式更新
+  const currentFilter = useSessionStore(
+    (state) => state.filterStatus?.get(sessionData.session_id) || 'all'
+  );
+
+  // API配置
+  const currentApi = useApiConfigStore((state) => state.currentApi);
 
   const progress = translationProgress.get(sessionData.session_id);
   const [showInfo, setShowInfo] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  // AI翻译状态
+  const [isAiTranslating, setIsAiTranslating] = useState(false);
+  const [aiProgress, setAiProgress] = useState(0);
+  const [aiCompleted, setAiCompleted] = useState(0);
+  const [aiTotal, setAiTotal] = useState(0);
+
+  // 取消令牌（使用 useRef 避免重新创建）
+  const cancellationTokenRef = useRef<CancellationToken | null>(null);
 
   // 是否正在加载翻译
   const isLoadingTranslations = progress !== undefined && progress < 100;
 
   // 获取当前 session 的未保存数量
   const pendingCount = getSessionPendingCount ? getSessionPendingCount(sessionData.session_id) : 0;
-
-  // 获取当前筛选状态
-  const currentFilter = getFilterStatus ? getFilterStatus(sessionData.session_id) : 'all';
 
   // 根据筛选状态过滤数据
   const filteredStrings = useMemo(() => {
@@ -77,6 +99,134 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
       showError('保存翻译失败: ' + String(error));
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  // AI翻译处理
+  const handleAiTranslate = async () => {
+    // 检查API配置
+    if (!currentApi) {
+      showError('请先在设置中配置API');
+      return;
+    }
+
+    // 检查是否有选中行
+    if (selectedCount === 0) {
+      showInfoNotification('请先选择需要翻译的行');
+      return;
+    }
+
+    // 获取选中的行ID（在函数内部获取，避免闭包问题）
+    const selectedRowIds = useSessionStore.getState().selectedRows?.get(sessionData.session_id) || new Set<string>();
+
+    console.log('[AI翻译] 选中的行数:', selectedRowIds.size);
+
+    // 构建翻译条目列表
+    const entries: TranslationEntry[] = [];
+    let index = 0;
+    for (const rowId of selectedRowIds) {
+      // ⚠️ 重要：rowId格式是 "form_id|record_type|subrecord_type"
+      // 但form_id本身包含'|'，格式是 "00012345|Skyrim.esm"
+      // 所以实际rowId是："00012345|Skyrim.esm|WEAP|FULL"（4个部分）
+      // 我们需要从最后往前取：最后一个是subrecord_type，倒数第二个是record_type，前面的都是form_id
+      const parts = rowId.split('|');
+
+      if (parts.length < 3) {
+        console.warn('[AI翻译] 无效的rowId格式:', rowId);
+        continue;
+      }
+
+      // 从后往前取
+      const subrecordType = parts[parts.length - 1];
+      const recordType = parts[parts.length - 2];
+      const formId = parts.slice(0, parts.length - 2).join('|'); // 剩余部分用|连接回去
+
+      // 查找对应的StringRecord
+      const record = sessionData.strings.find(
+        (s) =>
+          s.form_id === formId &&
+          s.record_type === recordType &&
+          s.subrecord_type === subrecordType,
+      );
+
+      if (record) {
+        entries.push({
+          index: index++,
+          formId: record.form_id,
+          recordType: record.record_type,
+          subrecordType: record.subrecord_type,
+          originalText: record.original_text,
+        });
+      } else {
+        console.warn('[AI翻译] 未找到记录:', { formId, recordType, subrecordType });
+      }
+    }
+
+    console.log('[AI翻译] 找到的有效条目数:', entries.length);
+
+    if (entries.length === 0) {
+      showError('未找到有效的翻译条目');
+      return;
+    }
+
+    // 开始AI翻译
+    setIsAiTranslating(true);
+    setAiProgress(0);
+    setAiCompleted(0);
+    setAiTotal(entries.length);
+
+    // 创建取消令牌
+    const cancellationToken = createCancellationToken();
+    cancellationTokenRef.current = cancellationToken;
+
+    try {
+      const result = await translateBatchWithAI(
+        entries,
+        currentApi,
+        (completed, total) => {
+          // 进度回调
+          setAiCompleted(completed);
+          setAiTotal(total);
+          setAiProgress((completed / total) * 100);
+        },
+        (_index, formId, recordType, subrecordType, translated) => {
+          // Apply回调：更新UI
+          if (updateStringRecord) {
+            updateStringRecord(
+              sessionData.session_id,
+              formId,
+              recordType,
+              subrecordType,
+              translated,
+              'ai', // 标记为AI翻译
+            );
+          }
+        },
+        cancellationToken, // 传递取消令牌
+      );
+
+      if (result.success) {
+        showSuccess(`AI翻译完成！已翻译 ${result.translatedCount} 条，请检查后保存`);
+      } else {
+        if (result.error === '用户取消翻译') {
+          showInfoNotification(`AI翻译已取消，已翻译 ${result.translatedCount} 条`);
+        } else {
+          showError(`AI翻译失败: ${result.error || '未知错误'}`);
+        }
+      }
+    } catch (error) {
+      showError('AI翻译失败: ' + String(error));
+    } finally {
+      setIsAiTranslating(false);
+      setAiProgress(0);
+      cancellationTokenRef.current = null;
+    }
+  };
+
+  // 取消AI翻译
+  const handleCancelTranslation = () => {
+    if (cancellationTokenRef.current) {
+      cancellationTokenRef.current.cancel();
     }
   };
 
@@ -133,8 +283,26 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
             />
           </Box>
 
+          {/* AI翻译按钮 */}
+          <Badge badgeContent={selectedCount} color="primary" sx={{ ml: 'auto' }}>
+            <Tooltip title={!currentApi ? '请先在设置中配置并激活API' : selectedCount === 0 ? '请先选择需要翻译的行' : ''}>
+              <span>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  color="primary"
+                  startIcon={<TranslateIcon />}
+                  onClick={handleAiTranslate}
+                  disabled={isAiTranslating || selectedCount === 0 || !currentApi}
+                >
+                  {isAiTranslating ? 'AI翻译中...' : 'AI翻译'}
+                </Button>
+              </span>
+            </Tooltip>
+          </Badge>
+
           {/* 保存翻译按钮 */}
-          <Badge badgeContent={pendingCount} color="error" sx={{ ml: 'auto' }}>
+          <Badge badgeContent={pendingCount} color="error" sx={{ ml: 1 }}>
             <Button
               size="small"
               variant="contained"
@@ -190,6 +358,32 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
       <Box sx={{ flex: 1, overflow: 'hidden' }}>
         <StringTable rows={filteredStrings} sessionId={sessionData.session_id} />
       </Box>
+
+      {/* AI翻译进度对话框 */}
+      <Dialog open={isAiTranslating} disableEscapeKeyDown>
+        <DialogTitle>AI翻译中...</DialogTitle>
+        <DialogContent sx={{ minWidth: 400 }}>
+          <DialogContentText>
+            正在使用 {currentApi?.name} 进行翻译，请稍候...
+          </DialogContentText>
+          <Box sx={{ mt: 2 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+              <Typography variant="body2" color="text.secondary">
+                进度: {aiCompleted} / {aiTotal}
+              </Typography>
+              <Typography variant="body2" color="primary">
+                {aiProgress.toFixed(1)}%
+              </Typography>
+            </Box>
+            <LinearProgress variant="determinate" value={aiProgress} />
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCancelTranslation} color="error" variant="outlined">
+            取消翻译
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

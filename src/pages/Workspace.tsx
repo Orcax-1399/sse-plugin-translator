@@ -4,6 +4,7 @@ import { Box } from "@mui/material";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "../stores/appStore";
 import { useSessionStore } from "../stores/sessionStore";
+import { useApiConfigStore } from "../stores/apiConfigStore";
 import SettingsModal from "../components/SettingsModal";
 import TranslationUpdatedListener from "../components/workspace/TranslationUpdatedListener";
 import WorkspaceAppBar from "../components/workspace/WorkspaceAppBar";
@@ -46,6 +47,9 @@ export default function Workspace() {
   const switchSession = useSessionStore((state) => state.switchSession);
   const checkSessionExists = useSessionStore((state) => state.checkSessionExists);
 
+  // API配置加载函数
+  const { loadConfigs, refreshCurrentApi } = useApiConfigStore();
+
   const [drawerOpen, setDrawerOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -53,6 +57,15 @@ export default function Workspace() {
   useEffect(() => {
     loadSettings();
   }, [loadSettings]);
+
+  // ✅ 加载API配置（在Workspace挂载时就获取）
+  useEffect(() => {
+    const initApiConfig = async () => {
+      await loadConfigs();
+      await refreshCurrentApi();
+    };
+    initApiConfig();
+  }, [loadConfigs, refreshCurrentApi]);
 
   // 如果没有游戏路径，跳转到首屏
   useEffect(() => {

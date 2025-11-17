@@ -376,10 +376,10 @@ impl TranslationDB {
         Ok(count)
     }
 
-    /// 按原文精确匹配查询翻译（用于单词参考）
+    /// 按原文模糊匹配查询翻译（用于单词参考）
     ///
     /// # 参数
-    /// - `text`: 要查询的原文
+    /// - `text`: 要查询的原文（不区分大小写，模糊匹配）
     /// - `limit`: 返回结果数量限制
     ///
     /// # 返回
@@ -387,17 +387,20 @@ impl TranslationDB {
     pub fn query_by_text(&self, text: &str, limit: usize) -> Result<Vec<Translation>> {
         let conn = self.conn.lock().unwrap();
 
+        // 构造LIKE模糊查询参数（小写 + 通配符）
+        let search_pattern = format!("%{}%", text.to_lowercase());
+
         let mut stmt = conn.prepare(
             "SELECT form_id, record_type, subrecord_type, editor_id, original_text,
                     translated_text, plugin_name, created_at, updated_at
              FROM translations
-             WHERE original_text = ?1
+             WHERE LOWER(original_text) LIKE ?1
              ORDER BY LENGTH(original_text) ASC
              LIMIT ?2"
         )?;
 
         let translations = stmt
-            .query_map(params![text, limit as i64], |row| {
+            .query_map(params![search_pattern, limit as i64], |row| {
                 Ok(Translation {
                     form_id: row.get(0)?,
                     record_type: row.get(1)?,

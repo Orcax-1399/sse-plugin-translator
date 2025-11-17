@@ -30,7 +30,6 @@ import { useApiConfigStore, type ApiConfig } from '../stores/apiConfigStore';
 export default function ApiConfigPanel() {
   const {
     configs,
-    currentApi,
     isLoading,
     error,
     loadConfigs,
