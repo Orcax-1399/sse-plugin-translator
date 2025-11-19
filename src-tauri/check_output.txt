@@ -1,0 +1,43 @@
+    Checking sse-plugin-translator v0.1.0 (D:\Workspace\rust\tauri\sse-plugin-translator\src-tauri)
+error[E0609]: no field `original_text` on type `ExtractedString`
+  --> src\esp_service.rs:88:35
+   |
+88 |         chinese_map.insert(key, s.original_text);
+   |                                   ^^^^^^^^^^^^^ unknown field
+   |
+   = note: available fields are: `editor_id`, `form_id`, `text`, `record_type`, `subrecord_type`, `index`
+
+error[E0609]: no field `original_text` on type `ExtractedString`
+   --> src\esp_service.rs:113:38
+    |
+113 |                 .unwrap_or_else(|| s.original_text.clone());
+    |                                      ^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `editor_id`, `form_id`, `text`, `record_type`, `subrecord_type`, `index`
+
+error[E0609]: no field `original_text` on type `ExtractedString`
+   --> src\esp_service.rs:120:34
+    |
+120 |                 original_text: s.original_text,  // 鑻辨枃鍘熸枃
+    |                                  ^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `editor_id`, `form_id`, `text`, `record_type`, `subrecord_type`, `index`
+
+error[E0609]: no field `original_text` on type `ExtractedString`
+   --> src\plugin_session.rs:113:34
+    |
+113 |                 original_text: s.original_text.clone(),
+    |                                  ^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `editor_id`, `form_id`, `text`, `record_type`, `subrecord_type`, `index`
+
+error[E0609]: no field `original_text` on type `ExtractedString`
+   --> src\plugin_session.rs:114:36
+    |
+114 |                 translated_text: s.original_text, // 鍒濆澶嶅埗 original_text
+    |                                    ^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `editor_id`, `form_id`, `text`, `record_type`, `subrecord_type`, `index`
+
+For more information about this error, try `rustc --explain E0609`.
+error: could not compile `sse-plugin-translator` (lib) due to 5 previous errors

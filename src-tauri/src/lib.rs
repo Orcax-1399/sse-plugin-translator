@@ -1,22 +1,22 @@
-mod settings;
-mod scanner;
-mod translation_db;
+mod api_manage;
+mod atomic_db;
 mod esp_service;
 mod plugin_session;
-mod atomic_db;
-mod api_manage;
+mod scanner;
+mod settings;
+mod translation_db;
 
-use settings::{Settings, read_settings, write_settings};
-use scanner::{PluginInfo, validate_game_path, scan_plugins};
-use translation_db::{TranslationDB, Translation, FormIdentifier, TranslationStats};
-use esp_service::{ExtractionStats, get_base_plugins, extract_base_dictionary};
+use api_manage::{ApiConfig, ApiConfigDB};
+use atomic_db::{AtomSource, AtomTranslation, AtomicDB};
+use esp_service::{extract_base_dictionary, get_base_plugins, ExtractionStats};
 use plugin_session::{PluginSessionManager, PluginStringsResponse, SessionInfo, StringRecord};
-use atomic_db::{AtomicDB, AtomTranslation, AtomSource};
-use api_manage::{ApiConfigDB, ApiConfig};
-use std::sync::Mutex;
-use std::collections::HashMap;
+use scanner::{scan_plugins, validate_game_path, PluginInfo};
 use serde::Serialize;
+use settings::{read_settings, write_settings, Settings};
+use std::collections::HashMap;
+use std::sync::Mutex;
 use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use translation_db::{FormIdentifier, Translation, TranslationDB, TranslationStats};
 
 /// 翻译进度通知 Payload
 #[derive(Debug, Clone, Serialize)]
@@ -90,9 +90,10 @@ fn get_translation(
     form_id: String,
     record_type: String,
     subrecord_type: String,
+    index: u32,
 ) -> Result<Option<Translation>, String> {
     let db = db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
-    db.get_translation(&form_id, &record_type, &subrecord_type)
+    db.get_translation(&form_id, &record_type, &subrecord_type, index)
         .map_err(|e| format!("查询翻译失败: {}", e))
 }
 
@@ -163,9 +164,7 @@ fn clear_plugin_translations(
 
 /// 清除所有翻译（慎用）
 #[tauri::command]
-fn clear_all_translations(
-    db: tauri::State<Mutex<TranslationDB>>,
-) -> Result<usize, String> {
+fn clear_all_translations(db: tauri::State<Mutex<TranslationDB>>) -> Result<usize, String> {
     let db = db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
     db.clear_all_translations()
         .map_err(|e| format!("清除所有翻译失败: {}", e))
@@ -173,9 +172,7 @@ fn clear_all_translations(
 
 /// 清除基础词典数据（9个官方插件）
 #[tauri::command]
-fn clear_base_dictionary(
-    db: tauri::State<Mutex<TranslationDB>>,
-) -> Result<usize, String> {
+fn clear_base_dictionary(db: tauri::State<Mutex<TranslationDB>>) -> Result<usize, String> {
     let db = db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
     db.clear_base_dictionary()
         .map_err(|e| format!("清除基础词典失败: {}", e))
@@ -191,7 +188,8 @@ fn load_plugin_session(
 ) -> Result<PluginStringsResponse, String> {
     use std::path::PathBuf;
 
-    let mut manager = session_manager.lock()
+    let mut manager = session_manager
+        .lock()
         .map_err(|e| format!("Session 管理器锁定失败: {}", e))?;
 
     manager.get_or_load(PathBuf::from(plugin_path))
@@ -203,7 +201,8 @@ fn close_plugin_session(
     session_manager: tauri::State<Mutex<PluginSessionManager>>,
     session_id: String,
 ) -> Result<(), String> {
-    let mut manager = session_manager.lock()
+    let mut manager = session_manager
+        .lock()
         .map_err(|e| format!("Session 管理器锁定失败: {}", e))?;
 
     manager.close(&session_id)
@@ -214,7 +213,8 @@ fn close_plugin_session(
 fn list_plugin_sessions(
     session_manager: tauri::State<Mutex<PluginSessionManager>>,
 ) -> Result<Vec<SessionInfo>, String> {
-    let manager = session_manager.lock()
+    let manager = session_manager
+        .lock()
         .map_err(|e| format!("Session 管理器锁定失败: {}", e))?;
 
     Ok(manager.list_sessions())
@@ -287,15 +287,11 @@ async fn open_editor_window(
     println!("  → 开始异步创建窗口...");
 
     // ✅ 直接在异步上下文中创建窗口
-    let builder = WebviewWindowBuilder::new(
-        &app,
-        &window_label,
-        WebviewUrl::App("/editor".into()),
-    )
-    .title("编辑翻译")
-    .inner_size(900.0, 600.0)
-    .resizable(true)
-    .center();
+    let builder = WebviewWindowBuilder::new(&app, &window_label, WebviewUrl::App("/editor".into()))
+        .title("编辑翻译")
+        .inner_size(900.0, 600.0)
+        .resizable(true)
+        .center();
 
     // ✅ 使用 ? 操作符，但立即返回，不阻塞
     match builder.build() {
@@ -377,20 +373,19 @@ async fn open_atomic_db_window(app: tauri::AppHandle) -> Result<String, String> 
     // 检查窗口是否已经打开
     if let Some(window) = app.get_webview_window(window_label) {
         // 窗口已存在，聚焦它
-        window.set_focus().map_err(|e| format!("窗口聚焦失败: {}", e))?;
+        window
+            .set_focus()
+            .map_err(|e| format!("窗口聚焦失败: {}", e))?;
         return Ok(window_label.to_string());
     }
 
     // 创建新窗口
-    let builder = WebviewWindowBuilder::new(
-        &app,
-        window_label,
-        WebviewUrl::App("/atomic-db".into()),
-    )
-    .title("原子数据库管理")
-    .inner_size(1200.0, 800.0)
-    .resizable(true)
-    .center();
+    let builder =
+        WebviewWindowBuilder::new(&app, window_label, WebviewUrl::App("/atomic-db".into()))
+            .title("原子数据库管理")
+            .inner_size(1200.0, 800.0)
+            .resizable(true)
+            .center();
 
     match builder.build() {
         Ok(_) => Ok(window_label.to_string()),
@@ -400,10 +395,10 @@ async fn open_atomic_db_window(app: tauri::AppHandle) -> Result<String, String> 
 
 /// 获取所有原子翻译
 #[tauri::command]
-fn get_all_atoms(
-    atomic_db: tauri::State<Mutex<AtomicDB>>,
-) -> Result<Vec<AtomTranslation>, String> {
-    let db = atomic_db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+fn get_all_atoms(atomic_db: tauri::State<Mutex<AtomicDB>>) -> Result<Vec<AtomTranslation>, String> {
+    let db = atomic_db
+        .lock()
+        .map_err(|e| format!("数据库锁定失败: {}", e))?;
     db.get_all_atoms()
         .map_err(|e| format!("获取原子翻译失败: {}", e))
 }
@@ -416,7 +411,9 @@ fn add_atom_translation(
     translated: String,
     source: String,
 ) -> Result<(), String> {
-    let db = atomic_db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+    let db = atomic_db
+        .lock()
+        .map_err(|e| format!("数据库锁定失败: {}", e))?;
 
     let atom_source = match source.as_str() {
         "base" => AtomSource::Base,
@@ -434,7 +431,9 @@ fn delete_atom_translation(
     atomic_db: tauri::State<Mutex<AtomicDB>>,
     original: String,
 ) -> Result<(), String> {
-    let db = atomic_db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+    let db = atomic_db
+        .lock()
+        .map_err(|e| format!("数据库锁定失败: {}", e))?;
     db.delete_atom(&original)
         .map_err(|e| format!("删除原子翻译失败: {}", e))
 }
@@ -445,7 +444,9 @@ fn replace_text_with_atoms(
     atomic_db: tauri::State<Mutex<AtomicDB>>,
     text: String,
 ) -> Result<String, String> {
-    let db = atomic_db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+    let db = atomic_db
+        .lock()
+        .map_err(|e| format!("数据库锁定失败: {}", e))?;
     Ok(db.replace_with_atoms(&text))
 }
 
@@ -453,10 +454,10 @@ fn replace_text_with_atoms(
 
 /// 获取所有API配置
 #[tauri::command]
-fn get_api_configs(
-    api_db: tauri::State<Mutex<ApiConfigDB>>,
-) -> Result<Vec<ApiConfig>, String> {
-    let db = api_db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+fn get_api_configs(api_db: tauri::State<Mutex<ApiConfigDB>>) -> Result<Vec<ApiConfig>, String> {
+    let db = api_db
+        .lock()
+        .map_err(|e| format!("数据库锁定失败: {}", e))?;
     db.get_all_configs()
         .map_err(|e| format!("获取API配置失败: {}", e))
 }
@@ -467,7 +468,9 @@ fn create_api_config(
     api_db: tauri::State<Mutex<ApiConfigDB>>,
     name: String,
 ) -> Result<i64, String> {
-    let db = api_db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+    let db = api_db
+        .lock()
+        .map_err(|e| format!("数据库锁定失败: {}", e))?;
     db.create_config(name)
         .map_err(|e| format!("创建API配置失败: {}", e))
 }
@@ -479,39 +482,39 @@ fn update_api_config(
     id: i64,
     config: ApiConfig,
 ) -> Result<(), String> {
-    let db = api_db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+    let db = api_db
+        .lock()
+        .map_err(|e| format!("数据库锁定失败: {}", e))?;
     db.update_config(id, &config)
         .map_err(|e| format!("更新API配置失败: {}", e))
 }
 
 /// 删除API配置
 #[tauri::command]
-fn delete_api_config(
-    api_db: tauri::State<Mutex<ApiConfigDB>>,
-    id: i64,
-) -> Result<(), String> {
-    let db = api_db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+fn delete_api_config(api_db: tauri::State<Mutex<ApiConfigDB>>, id: i64) -> Result<(), String> {
+    let db = api_db
+        .lock()
+        .map_err(|e| format!("数据库锁定失败: {}", e))?;
     db.delete_config(id)
         .map_err(|e| format!("删除API配置失败: {}", e))
 }
 
 /// 激活指定的API配置
 #[tauri::command]
-fn activate_api_config(
-    api_db: tauri::State<Mutex<ApiConfigDB>>,
-    id: i64,
-) -> Result<(), String> {
-    let db = api_db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+fn activate_api_config(api_db: tauri::State<Mutex<ApiConfigDB>>, id: i64) -> Result<(), String> {
+    let db = api_db
+        .lock()
+        .map_err(|e| format!("数据库锁定失败: {}", e))?;
     db.activate_config(id)
         .map_err(|e| format!("激活API配置失败: {}", e))
 }
 
 /// 获取当前激活的API配置
 #[tauri::command]
-fn get_current_api(
-    api_db: tauri::State<Mutex<ApiConfigDB>>,
-) -> Result<Option<ApiConfig>, String> {
-    let db = api_db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+fn get_current_api(api_db: tauri::State<Mutex<ApiConfigDB>>) -> Result<Option<ApiConfig>, String> {
+    let db = api_db
+        .lock()
+        .map_err(|e| format!("数据库锁定失败: {}", e))?;
     db.get_current_config()
         .map_err(|e| format!("获取当前API配置失败: {}", e))
 }
@@ -520,8 +523,7 @@ fn get_current_api(
 pub fn run() {
     // 初始化翻译数据库
     let db_path = get_db_path();
-    let translation_db = TranslationDB::new(db_path)
-        .expect("无法初始化翻译数据库");
+    let translation_db = TranslationDB::new(db_path).expect("无法初始化翻译数据库");
 
     // 初始化原子数据库
     let atomic_db_path = get_atomic_db_path();
@@ -603,8 +605,7 @@ fn get_db_path() -> std::path::PathBuf {
 
     // 确保userdata目录存在
     if !userdata_dir.exists() {
-        std::fs::create_dir_all(&userdata_dir)
-            .expect("无法创建userdata目录");
+        std::fs::create_dir_all(&userdata_dir).expect("无法创建userdata目录");
     }
 
     userdata_dir.join("translations.db")
@@ -628,8 +629,7 @@ fn get_atomic_db_path() -> std::path::PathBuf {
 
     // 确保userdata目录存在
     if !userdata_dir.exists() {
-        std::fs::create_dir_all(&userdata_dir)
-            .expect("无法创建userdata目录");
+        std::fs::create_dir_all(&userdata_dir).expect("无法创建userdata目录");
     }
 
     userdata_dir.join("atomic_translations.db")
@@ -653,8 +653,7 @@ fn get_api_db_path() -> std::path::PathBuf {
 
     // 确保userdata目录存在
     if !userdata_dir.exists() {
-        std::fs::create_dir_all(&userdata_dir)
-            .expect("无法创建userdata目录");
+        std::fs::create_dir_all(&userdata_dir).expect("无法创建userdata目录");
     }
 
     userdata_dir.join("api.db")

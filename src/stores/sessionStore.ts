@@ -17,6 +17,7 @@ export interface TranslationUpdatedPayload {
   form_id: string;
   record_type: string;
   subrecord_type: string;
+  index: number;
   original_text: string; // ✅ 添加 original_text 用于批量检测
   translated_text: string;
   translation_status: string;
@@ -35,11 +36,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   isLoading: false,
   error: null,
   // ✅ 跟踪未保存的修改（Map: session_id -> Set<record_id>）
-  // record_id 格式："form_id|record_type|subrecord_type"（与 selectedRows 保持一致）
+  // record_id 格式："form_id|record_type|subrecord_type|index"（与 selectedRows 保持一致）
   pendingChanges: new Map(),
   // ✅ 筛选状态（Map: session_id -> filter status）
   filterStatus: new Map(),
-  // ✅ 行选择状态（Map: session_id -> Set<row_id>，row_id = "form_id|record_type|subrecord_type"）
+  // ✅ 行选择状态（Map: session_id -> Set<row_id>，row_id = "form_id|record_type|subrecord_type|index"）
   selectedRows: new Map(),
 
   /**
@@ -226,6 +227,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         form_id: s.form_id,
         record_type: s.record_type,
         subrecord_type: s.subrecord_type,
+        index: s.index,
       }));
 
       // 2. 批量查询翻译（带进度通知）
@@ -242,14 +244,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       // 3. ✅ 优化：只存储译文字符串，减少内存占用
       translationMap = new Map<string, string>();
       translations.forEach((t) => {
-        const key = `${t.form_id}|${t.record_type}|${t.subrecord_type}`;
+        const key = `${t.form_id}|${t.record_type}|${t.subrecord_type}|${t.index}`;
         translationMap!.set(key, t.translated_text);
       });
 
       // 4. ✅ 使用 Immer 原地更新，避免创建新数组（节省约 60% 内存）
       const updatedSession = produce(session, (draft) => {
         draft.strings.forEach((s) => {
-          const key = `${s.form_id}|${s.record_type}|${s.subrecord_type}`;
+          const key = `${s.form_id}|${s.record_type}|${s.subrecord_type}|${s.index}`;
           const translatedText = translationMap!.get(key);
 
           if (translatedText) {
@@ -346,6 +348,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     formId: string,
     recordType: string,
     subrecordType: string,
+    index: number,
     translatedText: string,
     translationStatus: string,
   ) => {
@@ -363,7 +366,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         (s) =>
           s.form_id === formId &&
           s.record_type === recordType &&
-          s.subrecord_type === subrecordType,
+          s.subrecord_type === subrecordType &&
+          s.index === index,
       );
 
       if (record) {
@@ -373,7 +377,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     });
 
     // ✅ 生成复合 key（在 set 之前，便于日志使用）
-    const recordId = `${formId}|${recordType}|${subrecordType}`;
+    const recordId = `${formId}|${recordType}|${subrecordType}|${index}`;
 
     // 更新 Session 数据
     set((state) => {
@@ -408,6 +412,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           form_id,
           record_type,
           subrecord_type,
+          index,
           translated_text,
           translation_status,
         } = event.payload;
@@ -421,7 +426,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             (s) =>
               s.form_id === form_id &&
               s.record_type === record_type &&
-              s.subrecord_type === subrecord_type,
+              s.subrecord_type === subrecord_type &&
+              s.index === index,
           );
 
           if (record && updateStringRecord) {
@@ -431,6 +437,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
               form_id,
               record_type,
               subrecord_type,
+              index,
               translated_text,
               translation_status,
             );
@@ -473,7 +480,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       for (const record of session.strings) {
         // ✅ 使用复合 key 检查是否需要保存
-        const recordId = `${record.form_id}|${record.record_type}|${record.subrecord_type}`;
+        const recordId = `${record.form_id}|${record.record_type}|${record.subrecord_type}|${record.index}`;
         if (changedFormIds.has(recordId)) {
           const now = Math.floor(Date.now() / 1000);
 
@@ -481,6 +488,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             form_id: record.form_id,
             record_type: record.record_type,
             subrecord_type: record.subrecord_type,
+            index: record.index,
             editor_id: record.editor_id,
             original_text: record.original_text,
             translated_text: record.translated_text,
@@ -574,7 +582,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     for (const record of session.strings) {
       // ✅ 使用复合 key 检查是否需要保存
-      const recordId = `${record.form_id}|${record.record_type}|${record.subrecord_type}`;
+      const recordId = `${record.form_id}|${record.record_type}|${record.subrecord_type}|${record.index}`;
       if (changedFormIds.has(recordId)) {
         const now = Math.floor(Date.now() / 1000);
 
@@ -582,6 +590,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           form_id: record.form_id,
           record_type: record.record_type,
           subrecord_type: record.subrecord_type,
+          index: record.index,
           editor_id: record.editor_id,
           original_text: record.original_text,
           translated_text: record.translated_text,
@@ -660,7 +669,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
    * 设置选中的行
    *
    * @param sessionId - Session ID
-   * @param rowIds - 行ID集合（格式："form_id|record_type|subrecord_type"）
+   * @param rowIds - 行ID集合（格式："form_id|record_type|subrecord_type|index"）
    */
   setSelectedRows: (sessionId: string, rowIds: Set<string>) => {
     set((state) => {
@@ -687,7 +696,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
    * 获取选中的行
    *
    * @param sessionId - Session ID
-   * @returns 行ID集合（格式："form_id|record_type|subrecord_type"）
+   * @returns 行ID集合（格式："form_id|record_type|subrecord_type|index"）
    */
   getSelectedRows: (sessionId: string): Set<string> => {
     const { selectedRows } = get();

@@ -26,6 +26,8 @@ export interface Translation {
   record_type: string;
   /** 子记录类型 (如: "FULL", "DESC") */
   subrecord_type: string;
+  /** 索引 (用于区分同一记录下的多条翻译) */
+  index: number;
   /** 编辑器ID (可选) */
   editor_id: string | null;
   /** 原文 */
@@ -50,6 +52,8 @@ export interface FormIdentifier {
   record_type: string;
   /** 子记录类型 */
   subrecord_type: string;
+  /** 索引 */
+  index: number;
 }
 
 /**
@@ -109,6 +113,8 @@ export interface StringRecord {
   record_type: string;
   /** 子记录类型 (如: "FULL") */
   subrecord_type: string;
+  /** 索引 */
+  index: number;
   /** 原文 */
   original_text: string;
   /** 译文（可编辑） */
@@ -175,7 +181,7 @@ export interface SessionState {
   pendingChanges?: Map<string, Set<string>>;
   /** 筛选状态 (Map: session_id -> filter status) */
   filterStatus?: Map<string, 'all' | 'untranslated' | 'manual' | 'ai'>;
-  /** 行选择状态 (Map: session_id -> Set<row_id>, row_id = "form_id|record_type|subrecord_type") */
+  /** 行选择状态 (Map: session_id -> Set<row_id>, row_id = "form_id|record_type|subrecord_type|index") */
   selectedRows?: Map<string, Set<string>>;
   /** 加载状态 */
   isLoading: boolean;
@@ -203,6 +209,7 @@ export interface SessionState {
     formId: string,
     recordType: string,
     subrecordType: string,
+    index: number,
     translatedText: string,
     translationStatus: string
   ) => void;
@@ -220,11 +227,11 @@ export interface SessionState {
   setFilterStatus?: (sessionId: string, status: 'all' | 'untranslated' | 'manual' | 'ai') => void;
   /** 获取筛选状态 */
   getFilterStatus?: (sessionId: string) => 'all' | 'untranslated' | 'manual' | 'ai';
-  /** 设置选中的行（rowId格式："form_id|record_type|subrecord_type"） */
+  /** 设置选中的行（rowId格式："form_id|record_type|subrecord_type|index"） */
   setSelectedRows?: (sessionId: string, rowIds: Set<string>) => void;
   /** 清空选中的行 */
   clearSelectedRows?: (sessionId: string) => void;
-  /** 获取选中的行（rowId格式："form_id|record_type|subrecord_type"） */
+  /** 获取选中的行（rowId格式："form_id|record_type|subrecord_type|index"） */
   getSelectedRows?: (sessionId: string) => Set<string>;
 }
 

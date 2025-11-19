@@ -27,7 +27,7 @@ const StringTable = memo(function StringTable({ rows, sessionId }: StringTablePr
   const setSelectedRows = useSessionStore((state) => state.setSelectedRows);
 
   // 获取当前session的选中行
-  // rowId格式："form_id|record_type|subrecord_type"
+  // rowId格式："form_id|record_type|subrecord_type|index"
   const selectedRowIds: GridRowSelectionModel = useMemo(() => {
     if (!sessionId || !selectedRows) {
       return { type: 'include', ids: new Set() };
@@ -37,7 +37,7 @@ const StringTable = memo(function StringTable({ rows, sessionId }: StringTablePr
   }, [sessionId, selectedRows]);
 
   // 处理行选择变化
-  // 将选中的rowId（"form_id|record_type|subrecord_type"）存储到session state
+  // 将选中的rowId（"form_id|record_type|subrecord_type|index"）存储到session state
   const handleRowSelectionChange = (newSelection: GridRowSelectionModel) => {
     if (!sessionId || !setSelectedRows) return;
 
@@ -115,7 +115,7 @@ const StringTable = memo(function StringTable({ rows, sessionId }: StringTablePr
         key={sessionId} // ✅ 强制在 session 切换时重新挂载，确保旧缓存释放
         rows={rows}
         columns={columns}
-        getRowId={(row) => `${row.form_id}|${row.record_type}|${row.subrecord_type}`} // ✅ 使用复合key作为唯一标识
+        getRowId={(row) => `${row.form_id}|${row.record_type}|${row.subrecord_type}|${row.index}`} // ✅ 使用复合key作为唯一标识
         initialState={{
           pagination: {
             paginationModel: { pageSize: 50 },

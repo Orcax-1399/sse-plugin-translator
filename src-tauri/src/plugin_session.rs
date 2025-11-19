@@ -12,6 +12,7 @@ pub struct StringRecord {
     pub editor_id: Option<String>,
     pub record_type: String,
     pub subrecord_type: String,
+    pub index: u32,
     pub original_text: String,
     pub translated_text: String, // 初始复制 original_text
     #[serde(default = "default_translation_status")]
@@ -110,8 +111,9 @@ impl PluginSessionManager {
                 editor_id: s.editor_id,
                 record_type: s.record_type,
                 subrecord_type: s.subrecord_type,
-                original_text: s.original_text.clone(),
-                translated_text: s.original_text, // 初始复制 original_text
+                index: s.index as u32,
+                original_text: s.text.clone(),
+                translated_text: s.text, // 初始复制 original_text
                 translation_status: "untranslated".to_string(), // 初始状态：未翻译
             })
             .collect();

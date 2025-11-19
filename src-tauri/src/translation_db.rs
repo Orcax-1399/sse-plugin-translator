@@ -1,4 +1,4 @@
-use rusqlite::{Connection, Result, params};
+use rusqlite::{params, Connection, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -9,6 +9,7 @@ pub struct Translation {
     pub form_id: String,
     pub record_type: String,
     pub subrecord_type: String,
+    pub index: u32,
     pub editor_id: Option<String>,
     pub original_text: String,
     pub translated_text: String,
@@ -37,6 +38,7 @@ pub struct FormIdentifier {
     pub form_id: String,
     pub record_type: String,
     pub subrecord_type: String,
+    pub index: u32,
 }
 
 /// 翻译数据库管理器
@@ -52,7 +54,7 @@ impl TranslationDB {
         // 启用WAL模式以支持并发（使用 execute_batch 避免返回结果的问题）
         conn.execute_batch(
             "PRAGMA journal_mode=WAL;
-             PRAGMA synchronous=NORMAL;"
+             PRAGMA synchronous=NORMAL;",
         )?;
 
         let db = TranslationDB {
@@ -73,13 +75,14 @@ impl TranslationDB {
                 form_id TEXT NOT NULL,
                 record_type TEXT NOT NULL,
                 subrecord_type TEXT NOT NULL,
+                \"index\" INTEGER NOT NULL DEFAULT 0,
                 editor_id TEXT,
                 original_text TEXT NOT NULL,
                 translated_text TEXT NOT NULL,
                 plugin_name TEXT,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
-                PRIMARY KEY (form_id, record_type, subrecord_type)
+                PRIMARY KEY (form_id, record_type, subrecord_type, \"index\")
             )",
             [],
         )?;
@@ -104,10 +107,10 @@ impl TranslationDB {
 
         conn.execute(
             "INSERT INTO translations
-                (form_id, record_type, subrecord_type, editor_id, original_text,
+                (form_id, record_type, subrecord_type, \"index\", editor_id, original_text,
                  translated_text, plugin_name, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-             ON CONFLICT(form_id, record_type, subrecord_type)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             ON CONFLICT(form_id, record_type, subrecord_type, \"index\")
              DO UPDATE SET
                 translated_text = excluded.translated_text,
                 updated_at = excluded.updated_at
@@ -116,6 +119,7 @@ impl TranslationDB {
                 translation.form_id,
                 translation.record_type,
                 translation.subrecord_type,
+                translation.index,
                 translation.editor_id,
                 translation.original_text,
                 translation.translated_text,
@@ -137,10 +141,10 @@ impl TranslationDB {
         for translation in translations {
             tx.execute(
                 "INSERT INTO translations
-                    (form_id, record_type, subrecord_type, editor_id, original_text,
+                    (form_id, record_type, subrecord_type, \"index\", editor_id, original_text,
                      translated_text, plugin_name, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-                 ON CONFLICT(form_id, record_type, subrecord_type)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                 ON CONFLICT(form_id, record_type, subrecord_type, \"index\")
                  DO UPDATE SET
                     translated_text = excluded.translated_text,
                     updated_at = excluded.updated_at
@@ -149,6 +153,7 @@ impl TranslationDB {
                     translation.form_id,
                     translation.record_type,
                     translation.subrecord_type,
+                    translation.index,
                     translation.editor_id,
                     translation.original_text,
                     translation.translated_text,
@@ -164,29 +169,39 @@ impl TranslationDB {
     }
 
     /// 查询单条翻译
-    pub fn get_translation(&self, form_id: &str, record_type: &str, subrecord_type: &str) -> Result<Option<Translation>> {
+    pub fn get_translation(
+        &self,
+        form_id: &str,
+        record_type: &str,
+        subrecord_type: &str,
+        index: u32,
+    ) -> Result<Option<Translation>> {
         let conn = self.conn.lock().unwrap();
 
         let mut stmt = conn.prepare(
-            "SELECT form_id, record_type, subrecord_type, editor_id, original_text,
+            "SELECT form_id, record_type, subrecord_type, \"index\", editor_id, original_text,
                     translated_text, plugin_name, created_at, updated_at
              FROM translations
-             WHERE form_id = ?1 AND record_type = ?2 AND subrecord_type = ?3"
+             WHERE form_id = ?1 AND record_type = ?2 AND subrecord_type = ?3 AND \"index\" = ?4",
         )?;
 
-        let result = stmt.query_row(params![form_id, record_type, subrecord_type], |row| {
-            Ok(Translation {
-                form_id: row.get(0)?,
-                record_type: row.get(1)?,
-                subrecord_type: row.get(2)?,
-                editor_id: row.get(3)?,
-                original_text: row.get(4)?,
-                translated_text: row.get(5)?,
-                plugin_name: row.get(6)?,
-                created_at: row.get(7)?,
-                updated_at: row.get(8)?,
-            })
-        });
+        let result = stmt.query_row(
+            params![form_id, record_type, subrecord_type, index],
+            |row| {
+                Ok(Translation {
+                    form_id: row.get(0)?,
+                    record_type: row.get(1)?,
+                    subrecord_type: row.get(2)?,
+                    index: row.get(3)?,
+                    editor_id: row.get(4)?,
+                    original_text: row.get(5)?,
+                    translated_text: row.get(6)?,
+                    plugin_name: row.get(7)?,
+                    created_at: row.get(8)?,
+                    updated_at: row.get(9)?,
+                })
+            },
+        );
 
         match result {
             Ok(translation) => Ok(Some(translation)),
@@ -224,17 +239,15 @@ impl TranslationDB {
 
         // 分批查询（每批最多1000条）
         for chunk in forms.chunks(1000) {
-            let placeholders: Vec<String> = chunk
-                .iter()
-                .map(|_| "(?, ?, ?)".to_string())
-                .collect();
+            let placeholders: Vec<String> =
+                chunk.iter().map(|_| "(?, ?, ?, ?)".to_string()).collect();
             let placeholders_str = placeholders.join(", ");
 
             let query = format!(
-                "SELECT form_id, record_type, subrecord_type, editor_id, original_text,
+                "SELECT form_id, record_type, subrecord_type, \"index\", editor_id, original_text,
                         translated_text, plugin_name, created_at, updated_at
                  FROM translations
-                 WHERE (form_id, record_type, subrecord_type) IN ({})",
+                 WHERE (form_id, record_type, subrecord_type, \"index\") IN ({})",
                 placeholders_str
             );
 
@@ -247,6 +260,7 @@ impl TranslationDB {
                         &f.form_id as &dyn rusqlite::ToSql,
                         &f.record_type as &dyn rusqlite::ToSql,
                         &f.subrecord_type as &dyn rusqlite::ToSql,
+                        &f.index as &dyn rusqlite::ToSql,
                     ]
                 })
                 .collect();
@@ -256,7 +270,8 @@ impl TranslationDB {
                     form_id: row.get(0)?,
                     record_type: row.get(1)?,
                     subrecord_type: row.get(2)?,
-                    editor_id: row.get(3)?,
+                    index: row.get(3)?,
+                    editor_id: row.get(4)?,
                     original_text: row.get(4)?,
                     translated_text: row.get(5)?,
                     plugin_name: row.get(6)?,
@@ -282,24 +297,23 @@ impl TranslationDB {
         let conn = self.conn.lock().unwrap();
 
         // 获取总数
-        let total_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM translations",
-            [],
-            |row| row.get(0),
-        )?;
+        let total_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM translations", [], |row| row.get(0))?;
 
         // 获取按plugin分组的统计
         let mut stmt = conn.prepare(
             "SELECT plugin_name, COUNT(*) as count
              FROM translations
              GROUP BY plugin_name
-             ORDER BY count DESC"
+             ORDER BY count DESC",
         )?;
 
         let plugin_counts = stmt
             .query_map([], |row| {
                 Ok(PluginCount {
-                    plugin_name: row.get::<_, Option<String>>(0)?.unwrap_or_else(|| "Unknown".to_string()),
+                    plugin_name: row
+                        .get::<_, Option<String>>(0)?
+                        .unwrap_or_else(|| "Unknown".to_string()),
                     count: row.get(1)?,
                 })
             })?
@@ -307,11 +321,9 @@ impl TranslationDB {
 
         // 获取最后更新时间
         let last_updated: i64 = conn
-            .query_row(
-                "SELECT MAX(updated_at) FROM translations",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT MAX(updated_at) FROM translations", [], |row| {
+                row.get(0)
+            })
             .unwrap_or(0);
 
         Ok(TranslationStats {
@@ -360,15 +372,20 @@ impl TranslationDB {
         ];
 
         // 构造 IN 查询的占位符
-        let placeholders = base_plugins.iter()
+        let placeholders = base_plugins
+            .iter()
             .map(|_| "?")
             .collect::<Vec<_>>()
             .join(", ");
 
-        let query = format!("DELETE FROM translations WHERE plugin_name IN ({})", placeholders);
+        let query = format!(
+            "DELETE FROM translations WHERE plugin_name IN ({})",
+            placeholders
+        );
 
         // 转换为 rusqlite 参数
-        let params: Vec<&dyn rusqlite::ToSql> = base_plugins.iter()
+        let params: Vec<&dyn rusqlite::ToSql> = base_plugins
+            .iter()
             .map(|s| s as &dyn rusqlite::ToSql)
             .collect();
 
@@ -391,12 +408,12 @@ impl TranslationDB {
         let search_pattern = format!("%{}%", text.to_lowercase());
 
         let mut stmt = conn.prepare(
-            "SELECT form_id, record_type, subrecord_type, editor_id, original_text,
+            "SELECT form_id, record_type, subrecord_type, \"index\", editor_id, original_text,
                     translated_text, plugin_name, created_at, updated_at
              FROM translations
              WHERE LOWER(original_text) LIKE ?1
              ORDER BY LENGTH(original_text) ASC
-             LIMIT ?2"
+             LIMIT ?2",
         )?;
 
         let translations = stmt
@@ -405,12 +422,13 @@ impl TranslationDB {
                     form_id: row.get(0)?,
                     record_type: row.get(1)?,
                     subrecord_type: row.get(2)?,
-                    editor_id: row.get(3)?,
-                    original_text: row.get(4)?,
-                    translated_text: row.get(5)?,
-                    plugin_name: row.get(6)?,
-                    created_at: row.get(7)?,
-                    updated_at: row.get(8)?,
+                    index: row.get(3)?,
+                    editor_id: row.get(4)?,
+                    original_text: row.get(5)?,
+                    translated_text: row.get(6)?,
+                    plugin_name: row.get(7)?,
+                    created_at: row.get(8)?,
+                    updated_at: row.get(9)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -439,6 +457,7 @@ mod tests {
             form_id: "00012BB7|Skyrim.esm".to_string(),
             record_type: "WEAP".to_string(),
             subrecord_type: "FULL".to_string(),
+            index: 0,
             editor_id: Some("IronSword".to_string()),
             original_text: "Iron Sword".to_string(),
             translated_text: "铁剑".to_string(),
@@ -450,7 +469,7 @@ mod tests {
         db.save_translation(translation.clone())?;
 
         // 测试查询翻译
-        let result = db.get_translation("00012BB7|Skyrim.esm", "WEAP", "FULL")?;
+        let result = db.get_translation("00012BB7|Skyrim.esm", "WEAP", "FULL", 0)?;
         assert!(result.is_some());
         assert_eq!(result.unwrap().translated_text, "铁剑");
 
@@ -462,7 +481,7 @@ mod tests {
         };
         db.save_translation(updated_translation)?;
 
-        let result = db.get_translation("00012BB7|Skyrim.esm", "WEAP", "FULL")?;
+        let result = db.get_translation("00012BB7|Skyrim.esm", "WEAP", "FULL", 0)?;
         assert_eq!(result.unwrap().translated_text, "钢剑");
 
         // 测试统计

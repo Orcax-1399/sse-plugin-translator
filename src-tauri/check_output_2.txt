@@ -1,0 +1,22 @@
+warning: field `plugin_path` is never read
+  --> src\plugin_session.rs:29:9
+   |
+27 | pub struct PluginSession {
+   |            ------------- field in this struct
+28 |     pub plugin_name: String,
+29 |     pub plugin_path: PathBuf,
+   |         ^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: method `batch_upsert` is never used
+   --> src\atomic_db.rs:240:12
+    |
+ 54 | impl AtomicDB {
+    | ------------- method in this implementation
+...
+240 |     pub fn batch_upsert(&self, atoms: Vec<(&str, &str, AtomSource)>) -> SqliteResult<()> {
+    |            ^^^^^^^^^^^^
+
+warning: `sse-plugin-translator` (lib) generated 2 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.31s

@@ -36,7 +36,8 @@ interface TranslationState {
   getTranslation: (
     formId: string,
     recordType: string,
-    subrecordType: string
+    subrecordType: string,
+    index: number
   ) => Promise<Translation | null>;
 
   /**
@@ -120,13 +121,14 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
     }
   },
 
-  getTranslation: async (formId, recordType, subrecordType) => {
+  getTranslation: async (formId, recordType, subrecordType, index) => {
     set({ isLoading: true, error: null });
     try {
       const result = await invoke<Translation | null>('get_translation', {
         formId,
         recordType,
         subrecordType,
+        index,
       });
       return result;
     } catch (error) {

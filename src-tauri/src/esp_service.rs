@@ -1,8 +1,8 @@
-use esp_extractor::LoadedPlugin;
 use crate::translation_db::Translation;
-use std::path::Path;
+use esp_extractor::LoadedPlugin;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
+use std::path::Path;
 
 /// 基础插件列表常量
 const BASE_PLUGINS: &[&str] = &[
@@ -84,8 +84,11 @@ pub fn extract_plugin_strings(plugin_path: &Path) -> Result<Vec<Translation>, St
     // 3. 建立中文映射表 (form_id|record_type|subrecord_type -> chinese_text)
     let mut chinese_map: HashMap<String, String> = HashMap::new();
     for s in chinese_strings {
-        let key = format!("{}|{}|{}", s.form_id, s.record_type, s.subrecord_type);
-        chinese_map.insert(key, s.original_text);
+        let key = format!(
+            "{}|{}|{}|{}",
+            s.form_id, s.record_type, s.subrecord_type, s.index
+        );
+        chinese_map.insert(key, s.text);
     }
 
     // 获取当前时间戳
@@ -104,21 +107,25 @@ pub fn extract_plugin_strings(plugin_path: &Path) -> Result<Vec<Translation>, St
     let translations: Vec<Translation> = english_strings
         .into_iter()
         .map(|s| {
-            let key = format!("{}|{}|{}", s.form_id, s.record_type, s.subrecord_type);
+            let key = format!(
+                "{}|{}|{}|{}",
+                s.form_id, s.record_type, s.subrecord_type, s.index
+            );
 
             // 查找对应的中文翻译
             let translated_text = chinese_map
                 .get(&key)
                 .cloned()
-                .unwrap_or_else(|| s.original_text.clone());
+                .unwrap_or_else(|| s.text.clone());
 
             Translation {
                 form_id: s.form_id,
                 record_type: s.record_type,
                 subrecord_type: s.subrecord_type,
+                index: s.index as u32,
                 editor_id: s.editor_id,
-                original_text: s.original_text,  // 英文原文
-                translated_text,                 // 中文翻译或英文回退
+                original_text: s.text, // 英文原文
+                translated_text,       // 中文翻译或英文回退
                 plugin_name: plugin_name.clone(),
                 created_at: now,
                 updated_at: now,
@@ -127,12 +134,16 @@ pub fn extract_plugin_strings(plugin_path: &Path) -> Result<Vec<Translation>, St
         .collect();
 
     // 统计匹配情况
-    let matched_count = translations.iter()
+    let matched_count = translations
+        .iter()
         .filter(|t| t.original_text != t.translated_text)
         .count();
     let unmatched_count = translations.len() - matched_count;
 
-    println!("  ✅ 匹配成功 {} 条，未匹配 {} 条", matched_count, unmatched_count);
+    println!(
+        "  ✅ 匹配成功 {} 条，未匹配 {} 条",
+        matched_count, unmatched_count
+    );
 
     Ok(translations)
 }
@@ -145,7 +156,9 @@ pub fn extract_plugin_strings(plugin_path: &Path) -> Result<Vec<Translation>, St
 /// # 返回
 /// * `Ok(ExtractionStats)` - 提取统计信息
 /// * `Err(String)` - 致命错误信息
-pub fn extract_base_dictionary(data_dir: &Path) -> Result<(Vec<Translation>, ExtractionStats), String> {
+pub fn extract_base_dictionary(
+    data_dir: &Path,
+) -> Result<(Vec<Translation>, ExtractionStats), String> {
     let mut stats = ExtractionStats::new(BASE_PLUGINS.len());
     let mut all_translations = Vec::new();
 
