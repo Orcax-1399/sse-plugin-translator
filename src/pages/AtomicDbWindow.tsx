@@ -27,7 +27,7 @@ interface AtomTranslation {
   original: string;
   translated: string;
   usage_count: number;
-  source: { Base?: null; AI?: null; Manual?: null };
+  source: 'Base' | 'AI' | 'Manual';
   created_at: number;
   updated_at: number;
 }
@@ -133,17 +133,22 @@ export default function AtomicDbWindow() {
 
   // 获取来源标签
   const getSourceLabel = (source: AtomTranslation['source']) => {
-    if ('Base' in source) return '基础';
-    if ('AI' in source) return 'AI';
-    if ('Manual' in source) return '手动';
-    return '未知';
+    switch (source) {
+      case 'Base': return '基础';
+      case 'AI': return 'AI';
+      case 'Manual': return '手动';
+      default: return '未知';
+    }
   };
 
   // 获取来源颜色
   const getSourceColor = (source: AtomTranslation['source']): 'primary' | 'success' | 'default' => {
-    if ('Base' in source) return 'primary';
-    if ('AI' in source) return 'success';
-    return 'default';
+    switch (source) {
+      case 'Base': return 'primary';
+      case 'AI': return 'success';
+      case 'Manual': return 'default';
+      default: return 'default';
+    }
   };
 
   // 定义表格列

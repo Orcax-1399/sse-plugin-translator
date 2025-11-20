@@ -1,6 +1,6 @@
 /**
  * AI翻译工具实现模块
- * 实现search和apply工具的具体逻辑
+ * 实现search和apply_translations工具的具体逻辑
  */
 
 import { invoke } from '@tauri-apps/api/core';
@@ -55,10 +55,10 @@ export const toolDefinitions = {
       },
     },
   },
-  apply: {
+  applyTranslations: {
     type: 'function' as const,
     function: {
-      name: 'apply',
+      name: 'apply_translations',
       description: '提交翻译结果。将已翻译的文本提交到系统。',
       parameters: {
         type: 'object',
@@ -204,7 +204,7 @@ export async function executeSearch(
 }
 
 /**
- * 执行apply工具
+ * 执行apply_translations工具
  * 从session state删除已翻译的条目，并调用回调更新UI
  */
 export function executeApply(
@@ -231,7 +231,7 @@ export function executeApply(
     };
   }
 
-  // 执行apply
+  // 执行apply_translations
   try {
     // 1. 从csv中删除已翻译的行
     sessionState.csv = sessionState.csv.filter(

@@ -10,6 +10,7 @@ export interface SessionState {
     tool: string;
     args: any;
     error: string;
+    aiResponse?: string;
   };
 }
 
@@ -32,7 +33,7 @@ export function buildSystemPrompt(): string {
 ## 核心规则
 
 1. **你只能输出工具调用，禁止直接输出翻译文本或任何解释性文字**
-2. 你有两个工具：search（查询术语）和 apply（提交翻译）
+2. 你有两个工具：search（查询术语）和 apply_translations（提交翻译）
 3. 当遇到了**人名**, **地名**, **术语**的时候，**一定要先调用search**
 
 ## 工具使用规范
@@ -46,7 +47,7 @@ export function buildSystemPrompt(): string {
 - 同一个术语在当前session中只需search一次，结果会保存在SEARCH缓存中
 - 如果术语已在SEARCH缓存中，不要重复查询
 
-### apply(translations: Array<{index: number, translated: string}>)
+### apply_translations(translations: Array<{index: number, translated: string}>)
 - 用于提交翻译结果
 - index 对应CSV中的行号
 - 你应该尽可能批量提交（一次多条），提高效率
@@ -80,13 +81,13 @@ export function buildSystemPrompt(): string {
 1. 查看CSV待翻译列表，识别需要search的术语
 2. 批量调用search查询术语（如果SEARCH缓存中没有）
 3. 根据search结果和术语标注，翻译所有CSV行
-4. 批量调用apply提交翻译（尽可能一次提交多条）
+4. 批量调用apply_translations提交翻译（尽可能一次提交多条）
 5. 如果存在长文本，则优先查询/翻译长文本，并且提交条目减少
 6. 如果CSV还有剩余，重复上述流程
 
 ## 错误处理
 
-如果工具调用失败（如apply的index不存在），系统会在下一轮提供错误信息。
+如果工具调用失败（如apply_translations的index不存在），系统会在下一轮提供错误信息。
 你需要根据错误信息调整参数，重新调用工具。
 
 记住：你的唯一输出应该是工具调用（tool_calls），不要输出任何文本解释。`;
@@ -129,7 +130,11 @@ export function buildUserPrompt(state: SessionState): string {
     prompt += `## ⚠️ 上次工具调用错误\n\n`;
     prompt += `工具: ${state.lastError.tool}\n`;
     prompt += `参数: ${JSON.stringify(state.lastError.args)}\n`;
-    prompt += `错误: ${state.lastError.error}\n\n`;
+    prompt += `错误: ${state.lastError.error}\n`;
+    if (state.lastError.aiResponse) {
+      prompt += `AI响应: ${state.lastError.aiResponse}\n`;
+    }
+    prompt += `\n`;
     prompt += `请根据错误信息调整参数并重试。\n\n`;
   }
 

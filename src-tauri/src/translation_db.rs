@@ -272,11 +272,11 @@ impl TranslationDB {
                     subrecord_type: row.get(2)?,
                     index: row.get(3)?,
                     editor_id: row.get(4)?,
-                    original_text: row.get(4)?,
-                    translated_text: row.get(5)?,
-                    plugin_name: row.get(6)?,
-                    created_at: row.get(7)?,
-                    updated_at: row.get(8)?,
+                    original_text: row.get(5)?,
+                    translated_text: row.get(6)?,
+                    plugin_name: row.get(7)?,
+                    created_at: row.get(8)?,
+                    updated_at: row.get(9)?,
                 })
             })?;
 

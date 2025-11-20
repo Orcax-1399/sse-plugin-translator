@@ -209,15 +209,26 @@ impl PluginSessionManager {
             .ok_or_else(|| format!("Session {} 不存在", session_id))?;
 
         let plugin_path = session.plugin_path.clone();
-        let target_path = if let Some(path) = save_as {
+        let timestamp = chrono::Local::now().format("%Y_%m_%d_%H_%M_%S").to_string();
+        let target_path = if let Some(ref path) = save_as {
             PathBuf::from(path)
         } else {
             // 备份原文件
-            let timestamp = chrono::Local::now().format("%Y_%m_%d_%H_%M_%S").to_string();
             let backup_path = format!("{}.{}.bak", plugin_path.to_string_lossy(), timestamp);
             fs::copy(&plugin_path, &backup_path).map_err(|e| format!("备份文件失败: {}", e))?;
             println!("✓ 已备份原文件: {}", backup_path);
             plugin_path.clone()
+        };
+
+        // 当覆盖原文件时，先写入临时文件，写入完成后再替换，避免被内存映射锁住
+        let temp_output_path = if save_as.is_none() {
+            let mut temp = target_path.clone();
+            // e.g. plugin.esp -> plugin.esp.<timestamp>.tmp
+            let tmp_ext = format!("{}.tmp", timestamp);
+            temp.set_extension(tmp_ext);
+            Some(temp)
+        } else {
+            None
         };
 
         println!("⏳ 正在应用翻译到: {:?}", target_path);
@@ -253,9 +264,27 @@ impl PluginSessionManager {
             .apply_translations(extracted_strings)
             .map_err(|e| format!("应用翻译失败: {}", e))?;
 
+        // 先写入临时文件（若存在），避免直接覆盖被映射的原文件
+        let output_path = temp_output_path
+            .as_ref()
+            .unwrap_or(&target_path)
+            .clone();
+
         editor
-            .save(&DefaultEspWriter, target_path.as_path())
+            .save(&DefaultEspWriter, output_path.as_path())
             .map_err(|e| format!("保存文件失败: {}", e))?;
+
+        drop(editor);
+
+        // 如果写入临时文件，写入完后再替换原文件
+        if let Some(temp_path) = temp_output_path {
+            if target_path.exists() {
+                fs::remove_file(&target_path)
+                    .map_err(|e| format!("替换原文件失败: {}", e))?;
+            }
+            fs::rename(&temp_path, &target_path)
+                .map_err(|e| format!("写入翻译文件失败: {}", e))?;
+        }
 
         Ok(target_path.to_string_lossy().to_string())
     }

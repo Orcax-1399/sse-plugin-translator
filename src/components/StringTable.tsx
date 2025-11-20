@@ -1,5 +1,5 @@
 import { useMemo, memo } from 'react';
-import { DataGrid, GridColDef, GridRowParams, GridRowSelectionModel } from '@mui/x-data-grid';
+import { DataGrid, GridColDef, GridRowParams, GridRowSelectionModel, GridPaginationModel } from '@mui/x-data-grid';
 import { Box } from '@mui/material';
 import { invoke } from '@tauri-apps/api/core';
 import type { StringRecord } from '../types';
@@ -11,6 +11,10 @@ interface StringTableProps {
   rows: StringRecord[];
   /** Session ID，用作 DataGrid 的 key，强制在 session 切换时重新挂载 */
   sessionId?: string;
+  /** 分页模型（由父组件控制） */
+  paginationModel: GridPaginationModel;
+  /** 分页变更回调 */
+  onPaginationModelChange: (model: GridPaginationModel) => void;
 }
 
 /**
@@ -21,7 +25,7 @@ interface StringTableProps {
  * ✅ 使用 React.memo 包装，避免不必要的重渲染
  * ✅ 使用 selector 精确订阅，避免引用整个 store 对象
  */
-const StringTable = memo(function StringTable({ rows, sessionId }: StringTableProps) {
+const StringTable = memo(function StringTable({ rows, sessionId, paginationModel, onPaginationModelChange }: StringTableProps) {
   // ✅ 使用 selector 精确订阅状态和方法
   const selectedRows = useSessionStore((state) => state.selectedRows);
   const setSelectedRows = useSessionStore((state) => state.setSelectedRows);
@@ -116,11 +120,8 @@ const StringTable = memo(function StringTable({ rows, sessionId }: StringTablePr
         rows={rows}
         columns={columns}
         getRowId={(row) => `${row.form_id}|${row.record_type}|${row.subrecord_type}|${row.index}`} // ✅ 使用复合key作为唯一标识
-        initialState={{
-          pagination: {
-            paginationModel: { pageSize: 50 },
-          },
-        }}
+        paginationModel={paginationModel}
+        onPaginationModelChange={onPaginationModelChange}
         pageSizeOptions={[25, 50, 100]}
         checkboxSelection // ✅ 启用复选框选择
         rowSelectionModel={selectedRowIds} // ✅ 当前选中的行

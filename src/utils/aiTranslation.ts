@@ -60,6 +60,16 @@ export type ApplyCallback = (
 ) => void;
 
 /**
+ * AI状态更新
+ */
+export type AiStatusType = 'info' | 'success' | 'error';
+
+export interface AiStatusUpdate {
+  type: AiStatusType;
+  message: string;
+}
+
+/**
  * 取消令牌接口
  */
 export interface CancellationToken {
@@ -74,6 +84,7 @@ export interface CancellationToken {
  * @param onProgress 进度回调
  * @param onApply Apply回调（更新UI）
  * @param cancellationToken 取消令牌（可选）
+ * @param onStatusChange 状态更新回调
  * @returns 翻译结果
  */
 export async function translateBatchWithAI(
@@ -82,6 +93,7 @@ export async function translateBatchWithAI(
   onProgress: ProgressCallback,
   onApply: ApplyCallback,
   cancellationToken?: CancellationToken,
+  onStatusChange?: (status: AiStatusUpdate) => void,
 ): Promise<TranslationResult> {
   if (entries.length === 0) {
     return { success: true, translatedCount: 0 };
@@ -98,6 +110,9 @@ export async function translateBatchWithAI(
 
   // 初始化Session状态（在try外面声明，以便catch块访问）
   let sessionState: SessionState | null = null;
+  const emitStatus = (type: AiStatusType, message: string) => {
+    onStatusChange?.({ type, message });
+  };
 
   try {
     // 1. 术语预处理（批量调用replace_with_atoms）
@@ -112,7 +127,7 @@ export async function translateBatchWithAI(
       searchCache: {},
     };
 
-    // 3. 创建entry映射（用于apply时查找完整信息）
+    // 3. 创建entry映射（用于apply_translations时查找完整信息）
     const entryMap = new Map<number, TranslationEntry>();
     entries.forEach((entry) => {
       entryMap.set(entry.index, entry);
@@ -127,6 +142,7 @@ export async function translateBatchWithAI(
       // 检查是否被取消
       if (cancellationToken?.isCancelled()) {
         console.log('[AI翻译] 用户取消翻译');
+        emitStatus('info', '已收到取消请求，正在停止翻译');
         return {
           success: false,
           translatedCount: totalCount - sessionState.csv.length,
@@ -149,13 +165,14 @@ export async function translateBatchWithAI(
         completion = await client.chat.completions.create({
           model: apiConfig.modelName,
           messages: messages as ChatCompletionMessageParam[],
-          tools: [toolDefinitions.search, toolDefinitions.apply],
+          tools: [toolDefinitions.search, toolDefinitions.applyTranslations],
           tool_choice: 'auto',
           temperature: 0.1,
           max_tokens: apiConfig.maxTokens,
         });
       } catch (error: any) {
         console.error('[AI翻译] API调用失败:', error);
+        emitStatus('error', `AI API调用失败: ${error.message || String(error)}`);
         throw new Error(`AI API调用失败: ${error.message || String(error)}`);
       }
 
@@ -163,6 +180,8 @@ export async function translateBatchWithAI(
       if (!message) {
         throw new Error('AI返回空响应');
       }
+
+      const aiResponsePreview = formatAiResponse(message);
 
       // 🔍 详细日志：AI返回的完整消息
       console.log('[AI翻译] AI返回消息:', {
@@ -179,10 +198,19 @@ export async function translateBatchWithAI(
         console.warn('[AI翻译] AI未输出工具调用，重新发送');
         console.warn('[AI翻译] AI返回的content:', message.content);
         console.warn('[AI翻译] finish_reason:', completion.choices[0]?.finish_reason);
+        const trimmedPreview =
+          aiResponsePreview.length > 120
+            ? `${aiResponsePreview.slice(0, 117)}...`
+            : aiResponsePreview || '(空响应)';
+        emitStatus(
+          'error',
+          `AI返回无效结果（未调用任何工具），正在重试。内容: ${trimmedPreview}`,
+        );
         sessionState.lastError = {
           tool: 'system',
           args: {},
-          error: '你必须调用工具（search或apply），不能直接输出文本。',
+          error: '你必须调用工具（search或apply_translations），不能直接输出文本。',
+          aiResponse: aiResponsePreview,
         };
         continue;
       }
@@ -202,8 +230,12 @@ export async function translateBatchWithAI(
 
         if (toolName === 'search') {
           // 执行search
-          try {
-            const searchResults = await executeSearch(args.terms);
+      try {
+        emitStatus(
+          'info',
+          `AI正在搜索术语，共 ${Array.isArray(args.terms) ? args.terms.length : 0} 个`,
+        );
+        const searchResults = await executeSearch(args.terms);
             // 更新searchCache
             sessionState.searchCache = {
               ...sessionState.searchCache,
@@ -214,16 +246,21 @@ export async function translateBatchWithAI(
             );
           } catch (error: any) {
             console.error('[AI翻译] search执行失败:', error);
+            emitStatus(
+              'error',
+              `search执行失败: ${error.message || String(error)}`,
+            );
             sessionState.lastError = {
               tool: 'search',
               args,
               error: error.message || String(error),
+              aiResponse: aiResponsePreview,
             };
             hasError = true;
             break;
           }
-        } else if (toolName === 'apply') {
-          // 执行apply
+        } else if (toolName === 'apply_translations') {
+          // 执行apply_translations
           // ⚠️ 有时AI会返回双重JSON编码的字符串，需要检查并解析
           let translations = args.translations;
           if (typeof translations === 'string') {
@@ -233,9 +270,10 @@ export async function translateBatchWithAI(
             } catch (e) {
               console.error('[AI翻译] 解析translations失败:', e);
               sessionState.lastError = {
-                tool: 'apply',
+                tool: 'apply_translations',
                 args,
                 error: `translations格式错误: ${String(e)}`,
+                aiResponse: aiResponsePreview,
               };
               hasError = true;
               break;
@@ -262,20 +300,24 @@ export async function translateBatchWithAI(
           );
 
           if (!applyResult.success) {
-            console.error('[AI翻译] apply执行失败:', applyResult.error);
+            console.error('[AI翻译] apply_translations执行失败:', applyResult.error);
+            emitStatus(
+              'error',
+              `apply_translations执行失败: ${applyResult.error || '未知错误'}`,
+            );
             sessionState.lastError = {
-              tool: 'apply',
+              tool: 'apply_translations',
               args,
               error: applyResult.error || '未知错误',
+              aiResponse: aiResponsePreview,
             };
             hasError = true;
             break;
           }
 
           console.log(
-            `[AI翻译] apply完成，翻译了 ${args.translations.length} 条`,
+            `[AI翻译] apply_translations完成，翻译了 ${args.translations.length} 条`,
           );
-
           // 更新进度
           const completed = totalCount - sessionState.csv.length;
           onProgress(completed, totalCount);
@@ -294,6 +336,10 @@ export async function translateBatchWithAI(
         `[AI翻译] Session未完成，剩余 ${sessionState.csv.length} 条`,
       );
       if (maxIterations === 0) {
+        emitStatus(
+          'error',
+          `翻译未完成：达到最大迭代次数，剩余 ${sessionState.csv.length} 条待翻译`,
+        );
         throw new Error(
           `翻译未完成：达到最大迭代次数，剩余 ${sessionState.csv.length} 条待翻译`,
         );
@@ -307,6 +353,7 @@ export async function translateBatchWithAI(
     };
   } catch (error: any) {
     console.error('[AI翻译] 翻译失败:', error);
+    emitStatus('error', error.message || String(error));
     return {
       success: false,
       translatedCount: entries.length - (sessionState?.csv?.length || 0),
@@ -327,4 +374,34 @@ export function createCancellationToken(): CancellationToken {
     },
     isCancelled: () => cancelled,
   };
+}
+
+function formatAiResponse(
+  message: OpenAI.Chat.Completions.ChatCompletionMessage,
+): string {
+  const content = message.content;
+  if (typeof content === 'string') {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    return (content as Array<string | { text?: string; content?: string }>)
+      .map((part) => {
+        if (typeof part === 'string') {
+          return part;
+        }
+        if (part && typeof part === 'object') {
+          if ('text' in part && typeof part.text === 'string') {
+            return part.text;
+          }
+          if ('content' in part && typeof (part as any).content === 'string') {
+            return (part as any).content;
+          }
+        }
+        return '';
+      })
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+  }
+  return '';
 }
