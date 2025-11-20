@@ -19,6 +19,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 aho-corasick = "1.1"
+chrono = "0.4.42"
 directories = "5"
 esp_extractor = "0.6.0"
 rayon = "1"

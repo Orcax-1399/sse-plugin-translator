@@ -1,6 +1,8 @@
-use esp_extractor::LoadedPlugin;
+use esp_extractor::{DefaultEspWriter, ExtractedString, LoadedPlugin, PluginEditor};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -177,5 +179,71 @@ impl PluginSessionManager {
                 }
             })
             .collect()
+    }
+
+    /// 应用翻译到插件文件
+    ///
+    /// # 参数
+    /// * `session_id` - Session ID
+    /// * `translations` - 翻译记录列表
+    /// * `save_as` - 另存为路径（可选，如果为 None 则覆盖原文件）
+    ///
+    /// # 返回
+    /// * `Ok(String)` - 保存的路径
+    /// * `Err(String)` - 错误信息
+    pub fn apply_translations(
+        &mut self,
+        session_id: &str,
+        translations: Vec<StringRecord>,
+        save_as: Option<String>,
+    ) -> Result<String, String> {
+        let session = self
+            .sessions
+            .get(session_id)
+            .ok_or_else(|| format!("Session {} 不存在", session_id))?;
+
+        let plugin_path = session.plugin_path.clone();
+        let target_path = if let Some(path) = save_as {
+            PathBuf::from(path)
+        } else {
+            // 备份原文件
+            let timestamp = chrono::Local::now().format("%Y_%m_%d_%H_%M_%S").to_string();
+            let backup_path = format!("{}.{}.bak", plugin_path.to_string_lossy(), timestamp);
+            fs::copy(&plugin_path, &backup_path).map_err(|e| format!("备份文件失败: {}", e))?;
+            println!("✓ 已备份原文件: {}", backup_path);
+            plugin_path.clone()
+        };
+
+        println!("⏳ 正在应用翻译到: {:?}", target_path);
+
+        // 转换为 ExtractedString (并行处理)
+        let extracted_strings: Vec<ExtractedString> = translations
+            .par_iter()
+            .map(|r| ExtractedString {
+                form_id: r.form_id.clone(),
+                editor_id: r.editor_id.clone(),
+                text: r.translated_text.clone(), // 使用翻译后的文本
+                record_type: r.record_type.clone(),
+                subrecord_type: r.subrecord_type.clone(),
+                index: r.index as i32,
+            })
+            .collect();
+
+        // 加载插件
+        let loaded = LoadedPlugin::load_auto(plugin_path.clone(), None)
+            .map_err(|e| format!("加载插件失败: {}", e))?;
+
+        // 使用 PluginEditor 应用翻译
+        let mut editor = PluginEditor::new(loaded.into_plugin());
+
+        editor
+            .apply_translations(extracted_strings)
+            .map_err(|e| format!("应用翻译失败: {}", e))?;
+
+        editor
+            .save(&DefaultEspWriter, target_path.as_path())
+            .map_err(|e| format!("保存文件失败: {}", e))?;
+
+        Ok(target_path.to_string_lossy().to_string())
     }
 }
