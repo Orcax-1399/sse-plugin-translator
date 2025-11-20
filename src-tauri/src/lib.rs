@@ -1,5 +1,6 @@
 mod api_manage;
 mod atomic_db;
+mod bsa_logger;
 mod constants;
 mod esp_service;
 mod plugin_session;

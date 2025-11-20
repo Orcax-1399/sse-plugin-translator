@@ -1,3 +1,4 @@
+use crate::bsa_logger::log_bsa_presence;
 use crate::constants::BASE_PLUGINS;
 use crate::translation_db::Translation;
 use esp_extractor::LoadedPlugin;
@@ -56,6 +57,7 @@ pub fn get_base_plugins() -> Vec<String> {
 /// * `Err(String)` - 错误信息
 pub fn extract_plugin_strings(plugin_path: &Path) -> Result<Vec<Translation>, String> {
     // 1. 加载英文版
+    log_bsa_presence(plugin_path, Some("english"));
     let loaded_en = LoadedPlugin::load_auto(plugin_path.to_path_buf(), Some("english"))
         .map_err(|e| format!("加载英文版插件失败: {}", e))?;
     let english_strings = loaded_en.extract_strings();
@@ -63,6 +65,7 @@ pub fn extract_plugin_strings(plugin_path: &Path) -> Result<Vec<Translation>, St
     println!("  📖 英文版提取 {} 条记录", english_strings.len());
 
     // 2. 加载中文版
+    log_bsa_presence(plugin_path, Some("chinese"));
     let loaded_zh = LoadedPlugin::load_auto(plugin_path.to_path_buf(), Some("chinese"))
         .map_err(|e| format!("加载中文版插件失败: {}", e))?;
     let chinese_strings = loaded_zh.extract_strings();

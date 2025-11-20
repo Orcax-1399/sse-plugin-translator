@@ -1,3 +1,4 @@
+use crate::bsa_logger::log_bsa_presence;
 use esp_extractor::{DefaultEspWriter, ExtractedString, LoadedPlugin, PluginEditor};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -101,7 +102,8 @@ impl PluginSessionManager {
         println!("⏳ 加载新的插件 Session: {}", plugin_name);
 
         // 加载插件（使用智能自动加载）
-        let loaded = LoadedPlugin::load_auto(plugin_path.clone(), Some("chinese"))
+        log_bsa_presence(&plugin_path, Some("english"));
+        let loaded = LoadedPlugin::load_auto(plugin_path.clone(), Some("english"))
             .map_err(|e| format!("加载插件失败: {}", e))?;
 
         // 提取字符串
@@ -239,7 +241,8 @@ impl PluginSessionManager {
             loaded
         } else {
             println!("⚠️ Session 缓存的 LoadedPlugin 已被使用或不存在，重新加载...");
-            LoadedPlugin::load_auto(plugin_path.clone(), None)
+            log_bsa_presence(&plugin_path, Some("english"));
+            LoadedPlugin::load_auto(plugin_path.clone(), Some("english"))
                 .map_err(|e| format!("加载插件失败: {}", e))?
         };
 
