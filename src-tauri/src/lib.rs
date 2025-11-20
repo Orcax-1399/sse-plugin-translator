@@ -275,6 +275,22 @@ async fn open_editor_window(
     record: StringRecord,
 ) -> Result<String, String> {
     use std::time::{SystemTime, UNIX_EPOCH};
+    use std::io::Write;
+
+    let log = |msg: &str| {
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("startup.log")
+        {
+            let _ = writeln!(
+                file,
+                "[{}] [EditorWindow] {}",
+                chrono::Local::now().format("%H:%M:%S"),
+                msg
+            );
+        }
+    };
 
     // 生成唯一的窗口标签（使用时间戳）
     let timestamp = SystemTime::now()
@@ -282,6 +298,11 @@ async fn open_editor_window(
         .unwrap()
         .as_millis();
     let window_label = format!("editor-{}", timestamp);
+
+    log(&format!(
+        "Preparing editor window {} (form_id: {})",
+        window_label, record.form_id
+    ));
 
     println!("→ 准备创建编辑窗口: {}", window_label);
     println!("  form_id: {}", record.form_id);
@@ -291,15 +312,18 @@ async fn open_editor_window(
         match editor_data_store.lock() {
             Ok(mut store) => {
                 store.insert(window_label.clone(), record.clone());
+                log("Record stored in editor data store");
                 println!("  ✓ 数据已存储到内存");
             }
             Err(e) => {
+                log(&format!("Failed to lock editor data store: {}", e));
                 println!("  ❌ 锁定数据存储失败: {}", e);
                 return Err(format!("锁定数据存储失败: {}", e));
             }
         }
     }
 
+    log("Creating editor WebView window");
     println!("  → 开始异步创建窗口...");
 
     // ✅ 直接在异步上下文中创建窗口
@@ -307,15 +331,19 @@ async fn open_editor_window(
         .title("编辑翻译")
         .inner_size(900.0, 600.0)
         .resizable(true)
+        .additional_browser_args("--disable-gpu --disable-d3d11")
         .center();
 
     // ✅ 使用 ? 操作符，但立即返回，不阻塞
+    log("Invoking builder.build()");
     match builder.build() {
         Ok(_) => {
+            log("Editor window created successfully");
             println!("  ✓ 编辑窗口创建成功: {}", window_label);
             Ok(window_label)
         }
         Err(e) => {
+            log(&format!("Editor window creation failed: {}", e));
             println!("  ❌ 编辑窗口创建失败: {}", e);
 
             // 清理已存储的数据
@@ -384,10 +412,29 @@ fn query_word_translations(
 /// 打开原子数据库管理窗口
 #[tauri::command]
 async fn open_atomic_db_window(app: tauri::AppHandle) -> Result<String, String> {
+    use std::io::Write;
+
+    let log = |msg: &str| {
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("startup.log")
+        {
+            let _ = writeln!(
+                file,
+                "[{}] [AtomicDBWindow] {}",
+                chrono::Local::now().format("%H:%M:%S"),
+                msg
+            );
+        }
+    };
+
     let window_label = "atomic-db-window";
+    log("open_atomic_db_window called");
 
     // 检查窗口是否已经打开
     if let Some(window) = app.get_webview_window(window_label) {
+        log("Existing atomic DB window found, focusing");
         // 窗口已存在，聚焦它
         window
             .set_focus()
@@ -395,17 +442,26 @@ async fn open_atomic_db_window(app: tauri::AppHandle) -> Result<String, String> 
         return Ok(window_label.to_string());
     }
 
+    log("Creating new atomic DB window via WebviewWindowBuilder");
     // 创建新窗口
     let builder =
         WebviewWindowBuilder::new(&app, window_label, WebviewUrl::App("/atomic-db".into()))
             .title("原子数据库管理")
             .inner_size(1200.0, 800.0)
             .resizable(true)
+            .additional_browser_args("--disable-gpu --disable-d3d11")
             .center();
 
+    log("Invoking builder.build() for atomic DB window");
     match builder.build() {
-        Ok(_) => Ok(window_label.to_string()),
-        Err(e) => Err(format!("创建原子数据库窗口失败: {}", e)),
+        Ok(_) => {
+            log("Atomic DB window created successfully");
+            Ok(window_label.to_string())
+        }
+        Err(e) => {
+            log(&format!("Atomic DB window creation failed: {}", e));
+            Err(format!("创建原子数据库窗口失败: {}", e))
+        }
     }
 }
 
@@ -642,6 +698,20 @@ pub fn run() {
             // window.open_devtools(); // Optional: open devtools for debugging
         } else {
             log("Main window NOT found (it might be created later)");
+        }
+
+        log("Manual window creation starting...");
+        let window_builder =
+            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                .title("sse-plugin-translator")
+                .inner_size(800.0, 600.0)
+                .resizable(true)
+                .center()
+                .additional_browser_args("--disable-gpu --disable-d3d11");
+
+        match window_builder.build() {
+            Ok(_) => log("Window created successfully"),
+            Err(e) => log(&format!("Window creation failed: {}", e)),
         }
 
         log("Setup hook finished");
