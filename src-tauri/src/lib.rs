@@ -221,6 +221,21 @@ fn list_plugin_sessions(
     Ok(manager.list_sessions())
 }
 
+/// 应用翻译到插件文件
+#[tauri::command]
+fn apply_translations(
+    session_manager: tauri::State<Mutex<PluginSessionManager>>,
+    session_id: String,
+    translations: Vec<StringRecord>,
+    save_as: Option<String>,
+) -> Result<String, String> {
+    let mut manager = session_manager
+        .lock()
+        .map_err(|e| format!("Session 管理器锁定失败: {}", e))?;
+
+    manager.apply_translations(&session_id, translations, save_as)
+}
+
 // ==================== ESP 字典提取相关命令 ====================
 
 /// 获取基础插件列表
@@ -522,70 +537,160 @@ fn get_current_api(api_db: tauri::State<Mutex<ApiConfigDB>>) -> Result<Option<Ap
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Helper for logging
+    let log = |msg: &str| {
+        use std::io::Write;
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("startup.log")
+        {
+            let _ = writeln!(
+                file,
+                "[{}] {}",
+                chrono::Local::now().format("%H:%M:%S"),
+                msg
+            );
+        }
+    };
+
+    log("Entering run()");
+
     // 初始化翻译数据库
+    log("Initializing TranslationDB...");
     let db_path = get_db_path();
+    log(&format!("DB Path: {:?}", db_path));
     let translation_db = TranslationDB::new(db_path).expect("无法初始化翻译数据库");
 
     // 初始化原子数据库
+    log("Initializing AtomicDB...");
     let atomic_db_path = get_atomic_db_path();
     let atomic_db = AtomicDB::new(atomic_db_path.to_str().expect("路径转换失败"))
         .expect("无法初始化原子数据库");
 
     // 初始化API配置数据库
+    log("Initializing ApiConfigDB...");
     let api_db_path = get_api_db_path();
     let api_db = ApiConfigDB::new(api_db_path.to_str().expect("路径转换失败"))
         .expect("无法初始化API配置数据库");
 
     // 初始化插件 Session 管理器
+    log("Initializing SessionManager...");
     let session_manager = PluginSessionManager::new();
 
     // 初始化编辑窗口数据存储（用于窗口间数据传递）
     let editor_data_store: Mutex<HashMap<String, StringRecord>> = Mutex::new(HashMap::new());
 
-    tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init())
-        .manage(Mutex::new(translation_db))
-        .manage(Mutex::new(atomic_db))
-        .manage(Mutex::new(api_db))
-        .manage(Mutex::new(session_manager))
-        .manage(editor_data_store)
-        .invoke_handler(tauri::generate_handler![
-            get_settings,
-            set_game_path,
-            validate_game_directory,
-            get_plugin_list,
-            save_translation,
-            batch_save_translations,
-            get_translation,
-            batch_query_translations,
-            batch_query_translations_with_progress,
-            get_translation_statistics,
-            clear_plugin_translations,
-            clear_all_translations,
-            clear_base_dictionary,
-            load_plugin_session,
-            close_plugin_session,
-            list_plugin_sessions,
-            get_base_plugins_list,
-            extract_dictionary,
-            open_editor_window,
-            get_editor_data,
-            query_word_translations,
-            open_atomic_db_window,
-            get_all_atoms,
-            add_atom_translation,
-            delete_atom_translation,
-            replace_text_with_atoms,
-            get_api_configs,
-            create_api_config,
-            update_api_config,
-            delete_api_config,
-            activate_api_config,
-            get_current_api
-        ])
+    // Register panic hook
+    std::panic::set_hook(Box::new(|info| {
+        use std::io::Write;
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("startup.log")
+        {
+            let _ = writeln!(
+                file,
+                "[{}] PANIC: {:?}",
+                chrono::Local::now().format("%H:%M:%S"),
+                info
+            );
+        }
+    }));
+
+    log("Building Tauri app...");
+    let mut builder = tauri::Builder::default();
+    log("Builder created");
+
+    log("Adding opener plugin...");
+    builder = builder.plugin(tauri_plugin_opener::init());
+
+    log("Adding dialog plugin...");
+    builder = builder.plugin(tauri_plugin_dialog::init());
+
+    log("Managing states...");
+    builder = builder.manage(Mutex::new(translation_db));
+    builder = builder.manage(Mutex::new(atomic_db));
+    builder = builder.manage(Mutex::new(api_db));
+    builder = builder.manage(Mutex::new(session_manager));
+    builder = builder.manage(editor_data_store);
+
+    log("Setting up setup hook...");
+    builder = builder.setup(|app| {
+        // Helper for logging inside setup
+        let log = |msg: &str| {
+            use std::io::Write;
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("startup.log")
+            {
+                let _ = writeln!(
+                    file,
+                    "[{}] [SETUP] {}",
+                    chrono::Local::now().format("%H:%M:%S"),
+                    msg
+                );
+            }
+        };
+
+        log("Setup hook started");
+
+        let main_window = app.get_webview_window("main");
+        if let Some(_window) = main_window {
+            log("Main window found");
+            // window.open_devtools(); // Optional: open devtools for debugging
+        } else {
+            log("Main window NOT found (it might be created later)");
+        }
+
+        log("Setup hook finished");
+        Ok(())
+    });
+
+    log("Registering invoke handler...");
+    builder = builder.invoke_handler(tauri::generate_handler![
+        get_settings,
+        set_game_path,
+        validate_game_directory,
+        get_plugin_list,
+        save_translation,
+        batch_save_translations,
+        get_translation,
+        batch_query_translations,
+        batch_query_translations_with_progress,
+        get_translation_statistics,
+        clear_plugin_translations,
+        clear_all_translations,
+        clear_base_dictionary,
+        load_plugin_session,
+        close_plugin_session,
+        list_plugin_sessions,
+        apply_translations,
+        get_base_plugins_list,
+        extract_dictionary,
+        open_editor_window,
+        get_editor_data,
+        query_word_translations,
+        open_atomic_db_window,
+        get_all_atoms,
+        add_atom_translation,
+        delete_atom_translation,
+        replace_text_with_atoms,
+        get_api_configs,
+        create_api_config,
+        update_api_config,
+        delete_api_config,
+        activate_api_config,
+        get_current_api
+    ]);
+
+    log("Running app...");
+    builder
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+
+    log("Tauri app run finished (unexpected if loop)");
 }
 
 /// 获取数据库文件路径
