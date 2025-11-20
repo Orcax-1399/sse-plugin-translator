@@ -68,6 +68,7 @@ export default function EditorWindow() {
           editor_id: null,
           record_type: "ERROR",
           subrecord_type: "ERROR",
+          index: 0,
           original_text: "加载失败: " + String(error),
           translated_text: "",
           translation_status: "untranslated",
@@ -132,6 +133,7 @@ export default function EditorWindow() {
         form_id: record.form_id,
         record_type: record.record_type,
         subrecord_type: record.subrecord_type,
+        index: record.index,
         original_text: record.original_text, // ✅ 添加 original_text
         translated_text: translatedText,
         translation_status: "manual",

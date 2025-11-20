@@ -359,17 +359,8 @@ impl TranslationDB {
         let conn = self.conn.lock().unwrap();
 
         // 基础插件列表（与 esp_service.rs 保持一致）
-        let base_plugins = vec![
-            "Skyrim.esm",
-            "Update.esm",
-            "HearthFires.esm",
-            "Dragonborn.esm",
-            "Dawnguard.esm",
-            "ccQDRSSE001-SurvivalMode.esl",
-            "ccBGSSSE037-Curios.esl",
-            "ccBGSSSE025-AdvDSGS.esm",
-            "ccBGSSSE001-Fish.esm",
-        ];
+        use crate::constants::BASE_PLUGINS;
+        let base_plugins = BASE_PLUGINS.to_vec();
 
         // 构造 IN 查询的占位符
         let placeholders = base_plugins

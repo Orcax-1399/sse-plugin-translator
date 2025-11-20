@@ -47,6 +47,7 @@ export default function TranslationUpdatedListener() {
                 payload.form_id,
                 payload.record_type,
                 payload.subrecord_type,
+                payload.index,
                 payload.translated_text,
                 payload.translation_status,
               );
@@ -60,6 +61,7 @@ export default function TranslationUpdatedListener() {
                 payload.form_id,
                 payload.record_type,
                 payload.subrecord_type,
+                payload.index,
                 payload.translated_text,
                 payload.translation_status,
               );

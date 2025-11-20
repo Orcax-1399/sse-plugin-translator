@@ -1,21 +1,9 @@
+use crate::constants::BASE_PLUGINS;
 use crate::translation_db::Translation;
 use esp_extractor::LoadedPlugin;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
-
-/// 基础插件列表常量
-const BASE_PLUGINS: &[&str] = &[
-    "Skyrim.esm",
-    "Update.esm",
-    "HearthFires.esm",
-    "Dragonborn.esm",
-    "Dawnguard.esm",
-    "ccQDRSSE001-SurvivalMode.esl",
-    "ccBGSSSE037-Curios.esl",
-    "ccBGSSSE025-AdvDSGS.esm",
-    "ccBGSSSE001-Fish.esm",
-];
 
 /// 提取统计信息
 #[derive(Debug, Clone, Serialize, Deserialize)]

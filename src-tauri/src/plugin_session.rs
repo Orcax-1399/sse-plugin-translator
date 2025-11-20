@@ -32,6 +32,9 @@ pub struct PluginSession {
     pub plugin_path: PathBuf,
     pub strings: Arc<Vec<StringRecord>>,
     pub loaded_at: Instant,
+    // Store the loaded plugin to avoid reloading from disk
+    // Wrapped in Option because we need to take ownership when applying translations
+    pub loaded_plugin: Option<LoadedPlugin>,
 }
 
 /// Session 信息（用于列表返回）
@@ -131,6 +134,7 @@ impl PluginSessionManager {
             plugin_path: plugin_path.clone(),
             strings: Arc::clone(&strings_arc),
             loaded_at: Instant::now(),
+            loaded_plugin: Some(loaded),
         };
 
         // 缓存 Session
@@ -199,7 +203,7 @@ impl PluginSessionManager {
     ) -> Result<String, String> {
         let session = self
             .sessions
-            .get(session_id)
+            .get_mut(session_id)
             .ok_or_else(|| format!("Session {} 不存在", session_id))?;
 
         let plugin_path = session.plugin_path.clone();
@@ -229,9 +233,15 @@ impl PluginSessionManager {
             })
             .collect();
 
-        // 加载插件
-        let loaded = LoadedPlugin::load_auto(plugin_path.clone(), None)
-            .map_err(|e| format!("加载插件失败: {}", e))?;
+        // 获取 LoadedPlugin (优先使用缓存，否则重新加载)
+        let loaded = if let Some(loaded) = session.loaded_plugin.take() {
+            println!("✓ 使用 Session 缓存的 LoadedPlugin");
+            loaded
+        } else {
+            println!("⚠️ Session 缓存的 LoadedPlugin 已被使用或不存在，重新加载...");
+            LoadedPlugin::load_auto(plugin_path.clone(), None)
+                .map_err(|e| format!("加载插件失败: {}", e))?
+        };
 
         // 使用 PluginEditor 应用翻译
         let mut editor = PluginEditor::new(loaded.into_plugin());

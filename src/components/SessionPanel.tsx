@@ -152,6 +152,7 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
       if (record) {
         entries.push({
           index: index++,
+          recordIndex: record.index,
           formId: record.form_id,
           recordType: record.record_type,
           subrecordType: record.subrecord_type,
@@ -189,7 +190,7 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
           setAiTotal(total);
           setAiProgress((completed / total) * 100);
         },
-        (_index, formId, recordType, subrecordType, translated) => {
+        (_index, recIndex, formId, recordType, subrecordType, translated) => {
           // Apply回调：更新UI
           if (updateStringRecord) {
             updateStringRecord(
@@ -197,6 +198,7 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
               formId,
               recordType,
               subrecordType,
+              recIndex,
               translated,
               'ai', // 标记为AI翻译
             );
@@ -301,7 +303,6 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
             </Tooltip>
           </Badge>
 
-          {/* 保存翻译按钮 */}
           <Badge badgeContent={pendingCount} color="error" sx={{ ml: 1 }}>
             <Button
               size="small"
@@ -314,6 +315,30 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
               {isSaving ? '保存中...' : '保存翻译'}
             </Button>
           </Badge>
+
+          {/* 应用到插件按钮 */}
+          <Button
+            size="small"
+            variant="contained"
+            color="success"
+            sx={{ ml: 1 }}
+            onClick={async () => {
+              if (useSessionStore.getState().applyTranslations) {
+                try {
+                  setIsSaving(true);
+                  await useSessionStore.getState().applyTranslations!(sessionData.session_id);
+                  showSuccess('成功应用翻译到插件文件');
+                } catch (error) {
+                  showError('应用翻译失败: ' + String(error));
+                } finally {
+                  setIsSaving(false);
+                }
+              }
+            }}
+            disabled={isSaving}
+          >
+            应用到插件
+          </Button>
 
           <Tooltip title={showInfo ? '隐藏详情' : '查看插件详情'}>
             <IconButton

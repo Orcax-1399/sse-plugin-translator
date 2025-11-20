@@ -19,8 +19,10 @@ import {
  * 翻译条目（输入）
  */
 export interface TranslationEntry {
-  /** 行索引（对应StringRecord的唯一标识） */
+  /** 批处理索引（用于内部映射） */
   index: number;
+  /** ESP记录索引 */
+  recordIndex: number;
   /** Form ID */
   formId: string;
   /** Record Type */
@@ -50,6 +52,7 @@ export type ProgressCallback = (completed: number, total: number) => void;
  */
 export type ApplyCallback = (
   index: number,
+  recordIndex: number,
   formId: string,
   recordType: string,
   subrecordType: string,
@@ -248,6 +251,7 @@ export async function translateBatchWithAI(
               if (entry) {
                 onApply(
                   index,
+                  entry.recordIndex,
                   entry.formId,
                   entry.recordType,
                   entry.subrecordType,

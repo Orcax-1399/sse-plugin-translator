@@ -636,6 +636,40 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   /**
+   * 应用翻译到插件文件（生成新的 ESP 文件）
+   *
+   * @param sessionId - Session ID
+   * @param saveAs - 另存为路径（可选）
+   * @returns 保存的文件路径
+   */
+  applyTranslations: async (sessionId: string, saveAs?: string): Promise<string> => {
+    const { openedSessions } = get();
+    const session = openedSessions.get(sessionId);
+
+    if (!session) {
+      throw new Error(`Session 不存在: ${sessionId}`);
+    }
+
+    console.log(`开始应用翻译到插件: ${sessionId}`);
+
+    try {
+      // 调用后端命令
+      const savedPath = await invoke<string>("apply_translations", {
+        sessionId,
+        translations: session.strings,
+        saveAs,
+      });
+
+      console.log(`✓ 翻译已应用到文件: ${savedPath}`);
+      return savedPath;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error("应用翻译失败:", errorMsg);
+      throw new Error(errorMsg);
+    }
+  },
+
+  /**
    * 设置筛选状态
    *
    * @param sessionId - Session ID

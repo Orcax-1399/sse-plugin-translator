@@ -221,6 +221,8 @@ export interface SessionState {
   getSessionPendingCount?: (sessionId: string) => number;
   /** 保存单个 session 的翻译到数据库 */
   saveSessionTranslations?: (sessionId: string) => Promise<number>;
+  /** 应用翻译到插件文件（生成新的 ESP 文件） */
+  applyTranslations?: (sessionId: string, saveAs?: string) => Promise<string>;
   /** 设置错误信息 */
   setError: (error: string | null) => void;
   /** 设置筛选状态 */
