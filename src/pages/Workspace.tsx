@@ -45,7 +45,9 @@ export default function Workspace() {
   // ✅ 只获取需要的 action 函数（zustand actions 引用稳定）
   const openSession = useSessionStore((state) => state.openSession);
   const switchSession = useSessionStore((state) => state.switchSession);
-  const checkSessionExists = useSessionStore((state) => state.checkSessionExists);
+  const checkSessionExists = useSessionStore(
+    (state) => state.checkSessionExists,
+  );
 
   // API配置加载函数
   const { loadConfigs, refreshCurrentApi } = useApiConfigStore();
@@ -84,26 +86,6 @@ export default function Workspace() {
     initEventListener().then((unlistenFn) => {
       cleanup = unlistenFn;
     });
-
-    return () => {
-      if (cleanup) {
-        cleanup();
-      }
-    };
-  }, []); // ✅ 空依赖，只在挂载时执行一次
-
-  // ✅ 初始化编辑窗口事件监听器（使用 getState 避免闭包捕获）
-  useEffect(() => {
-    let cleanup: (() => void) | null = null;
-
-    // 从 getState 获取函数，不在组件作用域解构
-    const { initEditorEventListener } = useSessionStore.getState();
-
-    if (initEditorEventListener) {
-      initEditorEventListener().then((unlistenFn) => {
-        cleanup = unlistenFn;
-      });
-    }
 
     return () => {
       if (cleanup) {

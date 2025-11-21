@@ -9,7 +9,11 @@ import type {
   Translation,
   TranslationProgressPayload,
 } from "../types";
-import { useHistoryStore, type HistoryCommand, type HistoryRecord } from "./historyStore";
+import {
+  useHistoryStore,
+  type HistoryCommand,
+  type HistoryRecord,
+} from "./historyStore";
 
 /**
  * 翻译更新事件 Payload
@@ -443,7 +447,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const historyCommand: HistoryCommand = {
         id: `${Date.now()}-${Math.random().toString(36).substring(7)}`,
         timestamp: Date.now(),
-        type: 'single',
+        type: "single",
         description: `Edit 1 item`,
         sessionId,
         records: [historyRecord],
@@ -452,61 +456,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       useHistoryStore.getState().pushCommand(historyCommand);
     }
 
-    console.log(`✓ 已更新记录: ${recordId} (${sessionId})${skipHistory ? ' (跳过历史)' : ''}`);
-  },
-
-  /**
-   * 初始化编辑窗口事件监听器
-   *
-   * 监听来自编辑窗口的翻译更新事件
-   */
-  initEditorEventListener: async () => {
-    const unlisten = await listen<TranslationUpdatedPayload>(
-      "translation-updated",
-      (event) => {
-        const {
-          form_id,
-          record_type,
-          subrecord_type,
-          index,
-          translated_text,
-          translation_status,
-        } = event.payload;
-
-        // 查找对应的 Session（遍历所有打开的 Session）
-        const { openedSessions, updateStringRecord } =
-          useSessionStore.getState();
-
-        for (const [sessionId, session] of openedSessions.entries()) {
-          const record = session.strings.find(
-            (s) =>
-              s.form_id === form_id &&
-              s.record_type === record_type &&
-              s.subrecord_type === subrecord_type &&
-              s.index === index,
-          );
-
-          if (record && updateStringRecord) {
-            // 找到对应的 Session，更新记录
-            updateStringRecord(
-              sessionId,
-              form_id,
-              record_type,
-              subrecord_type,
-              index,
-              translated_text,
-              translation_status,
-            );
-            console.log(`✓ 编辑窗口更新已应用: ${form_id} (${sessionId})`);
-            break;
-          }
-        }
-      },
+    console.log(
+      `✓ 已更新记录: ${recordId} (${sessionId})${skipHistory ? " (跳过历史)" : ""}`,
     );
-
-    return () => {
-      unlisten();
-    };
   },
 
   /**
@@ -698,7 +650,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
    * @param saveAs - 另存为路径（可选）
    * @returns 保存的文件路径
    */
-  applyTranslations: async (sessionId: string, saveAs?: string): Promise<string> => {
+  applyTranslations: async (
+    sessionId: string,
+    saveAs?: string,
+  ): Promise<string> => {
     const { openedSessions } = get();
     const session = openedSessions.get(sessionId);
 
@@ -807,6 +762,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       subrecordType: string;
       index: number;
       translatedText: string;
+      translationStatus?: string;
     }>,
   ) => {
     const { openedSessions } = get();
@@ -853,7 +809,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
         if (record) {
           record.translated_text = update.translatedText;
-          record.translation_status = "ai"; // 标记为AI翻译
+          record.translation_status = (update.translationStatus || "ai") as any;
         }
       }
     });
@@ -902,7 +858,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const historyCommand: HistoryCommand = {
       id: `${Date.now()}-${Math.random().toString(36).substring(7)}`,
       timestamp: Date.now(),
-      type: 'batch',
+      type: "batch",
       description: `Replace ${updates.length} items`,
       sessionId,
       records: historyRecords,
@@ -943,7 +899,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         if (record) {
           // 恢复所有字段到 beforeState
           record.translated_text = historyRecord.beforeState.translated_text;
-          record.translation_status = historyRecord.beforeState.translation_status;
+          record.translation_status =
+            historyRecord.beforeState.translation_status;
           record.editor_id = historyRecord.beforeState.editor_id;
           record.original_text = historyRecord.beforeState.original_text;
         } else {
@@ -957,15 +914,37 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const newSessions = new Map(state.openedSessions);
       newSessions.set(command.sessionId, revertedSession);
 
-      // 更新 pendingChanges（撤销操作也算作未保存的修改）
+      // ✅ 智能更新 pendingChanges：判断撤销后是否需要保存
       const newPendingChanges = new Map(state.pendingChanges);
-      const changes = newPendingChanges.get(command.sessionId) || new Set<string>();
+      const changes =
+        newPendingChanges.get(command.sessionId) || new Set<string>();
 
       for (const historyRecord of command.records) {
-        changes.add(historyRecord.recordId);
+        const beforeStatus = historyRecord.beforeState.translation_status;
+
+        // 判断撤销后的状态是否需要保存
+        if (beforeStatus === "manual" || beforeStatus === "untranslated") {
+          // 假设 "manual" 和 "untranslated" 状态来自数据库/初始状态
+          // 撤销到这些状态时，从 pendingChanges 移除
+          changes.delete(historyRecord.recordId);
+          console.log(
+            `↶ 撤销到数据库状态，移除待保存: ${historyRecord.recordId}`,
+          );
+        } else {
+          // "ai" 或其他状态，保留在 pendingChanges
+          changes.add(historyRecord.recordId);
+          console.log(
+            `↶ 撤销后仍需保存，保留待保存: ${historyRecord.recordId}`,
+          );
+        }
       }
 
-      newPendingChanges.set(command.sessionId, changes);
+      // 如果 changes 为空，从 Map 中删除该 session 的 key
+      if (changes.size === 0) {
+        newPendingChanges.delete(command.sessionId);
+      } else {
+        newPendingChanges.set(command.sessionId, changes);
+      }
 
       return {
         openedSessions: newSessions,
@@ -973,6 +952,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       };
     });
 
-    console.log(`↶ 撤销完成: ${command.description} (${command.records.length} 条记录)`);
+    console.log(
+      `↶ 撤销完成: ${command.description} (${command.records.length} 条记录)`,
+    );
   },
 }));

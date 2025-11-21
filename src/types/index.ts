@@ -99,7 +99,7 @@ export interface ExtractionStats {
 /**
  * 翻译状态类型
  */
-export type TranslationStatus = 'untranslated' | 'manual' | 'ai';
+export type TranslationStatus = "untranslated" | "manual" | "ai";
 
 /**
  * 字符串记录（用于表格显示）
@@ -180,7 +180,7 @@ export interface SessionState {
   /** 未保存的修改 (Map: session_id -> Set<form_id>) */
   pendingChanges?: Map<string, Set<string>>;
   /** 筛选状态 (Map: session_id -> filter status) */
-  filterStatus?: Map<string, 'all' | 'untranslated' | 'manual' | 'ai'>;
+  filterStatus?: Map<string, "all" | "untranslated" | "manual" | "ai">;
   /** 行选择状态 (Map: session_id -> Set<row_id>, row_id = "form_id|record_type|subrecord_type|index") */
   selectedRows?: Map<string, Set<string>>;
   /** 加载状态 */
@@ -212,7 +212,7 @@ export interface SessionState {
     index: number,
     translatedText: string,
     translationStatus: string,
-    skipHistory?: boolean
+    skipHistory?: boolean,
   ) => void;
   /** 批量保存翻译到数据库 */
   batchSaveTranslations?: () => Promise<number>;
@@ -227,9 +227,14 @@ export interface SessionState {
   /** 设置错误信息 */
   setError: (error: string | null) => void;
   /** 设置筛选状态 */
-  setFilterStatus?: (sessionId: string, status: 'all' | 'untranslated' | 'manual' | 'ai') => void;
+  setFilterStatus?: (
+    sessionId: string,
+    status: "all" | "untranslated" | "manual" | "ai",
+  ) => void;
   /** 获取筛选状态 */
-  getFilterStatus?: (sessionId: string) => 'all' | 'untranslated' | 'manual' | 'ai';
+  getFilterStatus?: (
+    sessionId: string,
+  ) => "all" | "untranslated" | "manual" | "ai";
   /** 设置选中的行（rowId格式："form_id|record_type|subrecord_type|index"） */
   setSelectedRows?: (sessionId: string, rowIds: Set<string>) => void;
   /** 清空选中的行 */
@@ -245,6 +250,7 @@ export interface SessionState {
       subrecordType: string;
       index: number;
       translatedText: string;
+      translationStatus?: string;
     }>,
   ) => void;
   /** 撤销历史命令（恢复到修改前的状态） */
