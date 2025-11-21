@@ -200,6 +200,26 @@ export async function executeSearch(
     console.log('[executeSearch] 未找到的术语:', notFoundTerms.join(', '));
   }
 
+  // 📝 保存搜索历史到数据库（供AI学习使用）
+  try {
+    const historyEntries = Object.entries(results)
+      .filter(([_, result]) => result.status === 'ok' && result.candidates.length > 0)
+      .map(([term, result]) => ({
+        term,
+        // 只保存 top3/5 候选的译文
+        candidates: result.candidates.slice(0, 5).map(c => c.zh),
+        updatedAt: Date.now(),
+      }));
+
+    if (historyEntries.length > 0) {
+      await invoke('save_search_history', { entries: historyEntries });
+      console.log(`[executeSearch] 已保存 ${historyEntries.length} 条搜索历史`);
+    }
+  } catch (error) {
+    // 保存失败不影响主流程
+    console.warn('[executeSearch] 保存搜索历史失败:', error);
+  }
+
   return results;
 }
 

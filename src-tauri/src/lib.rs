@@ -5,12 +5,14 @@ mod constants;
 mod esp_service;
 mod plugin_session;
 mod scanner;
+mod search_history;
 mod settings;
 mod translation_db;
 
 use api_manage::{ApiConfig, ApiConfigDB};
 use atomic_db::{AtomSource, AtomTranslation, AtomicDB};
 use esp_service::{extract_base_dictionary, get_base_plugins, ExtractionStats};
+use search_history::{SearchHistoryDB, SearchHistoryEntry};
 use plugin_session::{PluginSessionManager, PluginStringsResponse, SessionInfo, StringRecord};
 use scanner::{scan_plugins, validate_game_path, PluginInfo};
 use serde::Serialize;
@@ -592,6 +594,33 @@ fn get_current_api(api_db: tauri::State<Mutex<ApiConfigDB>>) -> Result<Option<Ap
         .map_err(|e| format!("获取当前API配置失败: {}", e))
 }
 
+// ==================== 搜索历史相关命令 ====================
+
+/// 批量保存搜索历史
+#[tauri::command]
+fn save_search_history(
+    search_history_db: tauri::State<Mutex<SearchHistoryDB>>,
+    entries: Vec<SearchHistoryEntry>,
+) -> Result<(), String> {
+    let db = search_history_db
+        .lock()
+        .map_err(|e| format!("数据库锁定失败: {}", e))?;
+    db.batch_upsert(entries)
+        .map_err(|e| format!("保存搜索历史失败: {}", e))
+}
+
+/// 获取所有搜索历史
+#[tauri::command]
+fn get_search_history(
+    search_history_db: tauri::State<Mutex<SearchHistoryDB>>,
+) -> Result<Vec<SearchHistoryEntry>, String> {
+    let db = search_history_db
+        .lock()
+        .map_err(|e| format!("数据库锁定失败: {}", e))?;
+    db.get_all()
+        .map_err(|e| format!("获取搜索历史失败: {}", e))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Helper for logging
@@ -631,6 +660,12 @@ pub fn run() {
     let api_db = ApiConfigDB::new(api_db_path.to_str().expect("路径转换失败"))
         .expect("无法初始化API配置数据库");
 
+    // 初始化搜索历史数据库
+    log("Initializing SearchHistoryDB...");
+    let search_history_db_path = get_search_history_db_path();
+    let search_history_db = SearchHistoryDB::new(search_history_db_path.to_str().expect("路径转换失败"))
+        .expect("无法初始化搜索历史数据库");
+
     // 初始化插件 Session 管理器
     log("Initializing SessionManager...");
     let session_manager = PluginSessionManager::new();
@@ -669,6 +704,7 @@ pub fn run() {
     builder = builder.manage(Mutex::new(translation_db));
     builder = builder.manage(Mutex::new(atomic_db));
     builder = builder.manage(Mutex::new(api_db));
+    builder = builder.manage(Mutex::new(search_history_db));
     builder = builder.manage(Mutex::new(session_manager));
     builder = builder.manage(editor_data_store);
 
@@ -753,7 +789,9 @@ pub fn run() {
         update_api_config,
         delete_api_config,
         activate_api_config,
-        get_current_api
+        get_current_api,
+        save_search_history,
+        get_search_history
     ]);
 
     log("Running app...");
@@ -834,4 +872,25 @@ fn get_api_db_path() -> std::path::PathBuf {
     }
 
     userdata_dir.join("api.db")
+}
+
+/// 获取搜索历史数据库文件路径
+fn get_search_history_db_path() -> std::path::PathBuf {
+    let userdata_dir = if cfg!(debug_assertions) {
+        std::env::current_dir()
+            .expect("无法获取当前目录")
+            .join("userdata")
+    } else {
+        std::env::current_exe()
+            .expect("无法获取可执行文件路径")
+            .parent()
+            .expect("无法获取父目录")
+            .join("userdata")
+    };
+
+    if !userdata_dir.exists() {
+        std::fs::create_dir_all(&userdata_dir).expect("无法创建userdata目录");
+    }
+
+    userdata_dir.join("search_history.db")
 }
