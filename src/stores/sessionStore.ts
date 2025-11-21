@@ -9,6 +9,7 @@ import type {
   Translation,
   TranslationProgressPayload,
 } from "../types";
+import { useHistoryStore, type HistoryCommand, type HistoryRecord } from "./historyStore";
 
 /**
  * 翻译更新事件 Payload
@@ -166,6 +167,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           isLoading: false,
         };
       });
+
+      // 🗑️ 清空历史记录
+      useHistoryStore.getState().clearSession(sessionId);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       console.error("关闭 Session 失败:", errorMsg);
@@ -342,6 +346,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
    * @param subrecordType - Subrecord Type
    * @param translatedText - 新的译文
    * @param translationStatus - 翻译状态
+   * @param skipHistory - 是否跳过历史记录（用于批量操作中的临时更新）
    */
   updateStringRecord: (
     sessionId: string,
@@ -351,6 +356,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     index: number,
     translatedText: string,
     translationStatus: string,
+    skipHistory?: boolean,
   ) => {
     const { openedSessions } = get();
     const session = openedSessions.get(sessionId);
@@ -359,6 +365,23 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       console.warn(`Session 不存在: ${sessionId}`);
       return;
     }
+
+    // 📸 捕获修改前的状态（深拷贝）
+    const recordId = `${formId}|${recordType}|${subrecordType}|${index}`;
+    const beforeRecord = session.strings.find(
+      (s) =>
+        s.form_id === formId &&
+        s.record_type === recordType &&
+        s.subrecord_type === subrecordType &&
+        s.index === index,
+    );
+
+    if (!beforeRecord) {
+      console.warn(`记录不存在: ${recordId}`);
+      return;
+    }
+
+    const beforeState = structuredClone(beforeRecord);
 
     // ✅ 使用 Immer 原地更新，避免创建新数组
     const updatedSession = produce(session, (draft) => {
@@ -376,8 +399,21 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }
     });
 
-    // ✅ 生成复合 key（在 set 之前，便于日志使用）
-    const recordId = `${formId}|${recordType}|${subrecordType}|${index}`;
+    // 📸 捕获修改后的状态（深拷贝）
+    const afterRecord = updatedSession.strings.find(
+      (s) =>
+        s.form_id === formId &&
+        s.record_type === recordType &&
+        s.subrecord_type === subrecordType &&
+        s.index === index,
+    );
+
+    if (!afterRecord) {
+      console.warn(`修改后记录不存在: ${recordId}`);
+      return;
+    }
+
+    const afterState = structuredClone(afterRecord);
 
     // 更新 Session 数据
     set((state) => {
@@ -396,7 +432,27 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       };
     });
 
-    console.log(`✓ 已更新记录: ${recordId} (${sessionId})`);
+    // 📝 添加到历史记录（除非明确跳过）
+    if (!skipHistory) {
+      const historyRecord: HistoryRecord = {
+        recordId,
+        beforeState,
+        afterState,
+      };
+
+      const historyCommand: HistoryCommand = {
+        id: `${Date.now()}-${Math.random().toString(36).substring(7)}`,
+        timestamp: Date.now(),
+        type: 'single',
+        description: `Edit 1 item`,
+        sessionId,
+        records: [historyRecord],
+      };
+
+      useHistoryStore.getState().pushCommand(historyCommand);
+    }
+
+    console.log(`✓ 已更新记录: ${recordId} (${sessionId})${skipHistory ? ' (跳过历史)' : ''}`);
   },
 
   /**
@@ -761,6 +817,29 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return;
     }
 
+    // 📸 批量捕获修改前的状态（深拷贝）
+    const historyRecords: HistoryRecord[] = [];
+
+    for (const update of updates) {
+      const recordId = `${update.formId}|${update.recordType}|${update.subrecordType}|${update.index}`;
+      const beforeRecord = session.strings.find(
+        (s) =>
+          s.form_id === update.formId &&
+          s.record_type === update.recordType &&
+          s.subrecord_type === update.subrecordType &&
+          s.index === update.index,
+      );
+
+      if (beforeRecord) {
+        const beforeState = structuredClone(beforeRecord);
+        historyRecords.push({
+          recordId,
+          beforeState,
+          afterState: beforeState, // 暂时设置为 beforeState，稍后更新
+        });
+      }
+    }
+
     // ✅ 使用 Immer 原地更新，避免创建新数组
     const updatedSession = produce(session, (draft) => {
       for (const update of updates) {
@@ -778,6 +857,24 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         }
       }
     });
+
+    // 📸 批量捕获修改后的状态并更新 historyRecords
+    for (let i = 0; i < historyRecords.length; i++) {
+      const historyRecord = historyRecords[i];
+      const update = updates[i];
+
+      const afterRecord = updatedSession.strings.find(
+        (s) =>
+          s.form_id === update.formId &&
+          s.record_type === update.recordType &&
+          s.subrecord_type === update.subrecordType &&
+          s.index === update.index,
+      );
+
+      if (afterRecord) {
+        historyRecord.afterState = structuredClone(afterRecord);
+      }
+    }
 
     // 更新 Session 数据
     set((state) => {
@@ -801,6 +898,81 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       };
     });
 
+    // 📝 添加到历史记录（作为一个批量操作）
+    const historyCommand: HistoryCommand = {
+      id: `${Date.now()}-${Math.random().toString(36).substring(7)}`,
+      timestamp: Date.now(),
+      type: 'batch',
+      description: `Replace ${updates.length} items`,
+      sessionId,
+      records: historyRecords,
+    };
+
+    useHistoryStore.getState().pushCommand(historyCommand);
+
     console.log(`✓ 批量更新完成: ${updates.length} 条记录 (${sessionId})`);
+  },
+
+  /**
+   * 撤销历史命令（恢复到修改前的状态）
+   *
+   * ⚠️ 注意：此方法不会添加新的历史记录（避免无限递归）
+   *
+   * @param command - 要撤销的历史命令
+   */
+  revertCommand: (command: HistoryCommand) => {
+    const { openedSessions } = get();
+    const session = openedSessions.get(command.sessionId);
+
+    if (!session) {
+      console.warn(`Session 不存在: ${command.sessionId}`);
+      return;
+    }
+
+    // 使用 Immer 批量恢复所有记录的 beforeState
+    const revertedSession = produce(session, (draft) => {
+      for (const historyRecord of command.records) {
+        const record = draft.strings.find(
+          (s) =>
+            s.form_id === historyRecord.beforeState.form_id &&
+            s.record_type === historyRecord.beforeState.record_type &&
+            s.subrecord_type === historyRecord.beforeState.subrecord_type &&
+            s.index === historyRecord.beforeState.index,
+        );
+
+        if (record) {
+          // 恢复所有字段到 beforeState
+          record.translated_text = historyRecord.beforeState.translated_text;
+          record.translation_status = historyRecord.beforeState.translation_status;
+          record.editor_id = historyRecord.beforeState.editor_id;
+          record.original_text = historyRecord.beforeState.original_text;
+        } else {
+          console.warn(`撤销失败：记录不存在 ${historyRecord.recordId}`);
+        }
+      }
+    });
+
+    // 更新 Session 数据
+    set((state) => {
+      const newSessions = new Map(state.openedSessions);
+      newSessions.set(command.sessionId, revertedSession);
+
+      // 更新 pendingChanges（撤销操作也算作未保存的修改）
+      const newPendingChanges = new Map(state.pendingChanges);
+      const changes = newPendingChanges.get(command.sessionId) || new Set<string>();
+
+      for (const historyRecord of command.records) {
+        changes.add(historyRecord.recordId);
+      }
+
+      newPendingChanges.set(command.sessionId, changes);
+
+      return {
+        openedSessions: newSessions,
+        pendingChanges: newPendingChanges,
+      };
+    });
+
+    console.log(`↶ 撤销完成: ${command.description} (${command.records.length} 条记录)`);
   },
 }));

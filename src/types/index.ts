@@ -211,7 +211,8 @@ export interface SessionState {
     subrecordType: string,
     index: number,
     translatedText: string,
-    translationStatus: string
+    translationStatus: string,
+    skipHistory?: boolean
   ) => void;
   /** 批量保存翻译到数据库 */
   batchSaveTranslations?: () => Promise<number>;
@@ -246,6 +247,8 @@ export interface SessionState {
       translatedText: string;
     }>,
   ) => void;
+  /** 撤销历史命令（恢复到修改前的状态） */
+  revertCommand?: (command: any) => void;
 }
 
 /**

@@ -20,11 +20,13 @@ import type { GridPaginationModel } from "@mui/x-data-grid";
 import InfoIcon from "@mui/icons-material/Info";
 import SaveIcon from "@mui/icons-material/Save";
 import TranslateIcon from "@mui/icons-material/Translate";
+import UndoIcon from "@mui/icons-material/Undo";
 import type { PluginStringsResponse } from "../types";
 import StringTable from "./StringTable";
 import ReplaceDialog from "./workspace/ReplaceDialog";
 import { useSessionStore } from "../stores/sessionStore";
 import { useApiConfigStore } from "../stores/apiConfigStore";
+import { useHistoryStore, type HistoryCommand, type HistoryRecord } from "../stores/historyStore";
 import {
   showSuccess,
   showError,
@@ -105,6 +107,56 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
 
   // Replace 对话框状态
   const [replaceDialogOpen, setReplaceDialogOpen] = useState(false);
+
+  // 可撤销的操作数量
+  const undoCount = useHistoryStore((state) => state.getUndoCount(sessionData.session_id));
+
+  // ✅ Ctrl+Z 快捷键监听（撤销功能）
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // 检查是否按下 Ctrl+Z (或 Cmd+Z on Mac)
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+        // 防止在输入框中触发（检查 activeElement）
+        const activeElement = document.activeElement;
+        const isInputField = activeElement && (
+          activeElement.tagName === 'INPUT' ||
+          activeElement.tagName === 'TEXTAREA' ||
+          (activeElement as HTMLElement).isContentEditable
+        );
+
+        if (isInputField) {
+          return; // 在输入框中，不拦截（保留浏览器原生撤销）
+        }
+
+        // 检查是否可以撤销
+        const canUndo = useHistoryStore.getState().canUndo(sessionData.session_id);
+        if (!canUndo) {
+          console.log("⚠️ 没有可撤销的操作");
+          return;
+        }
+
+        // 阻止默认行为
+        e.preventDefault();
+
+        // 执行撤销
+        const command = useHistoryStore.getState().undo(sessionData.session_id);
+        const revertCommand = useSessionStore.getState().revertCommand;
+        if (command && revertCommand) {
+          revertCommand(command);
+          showSuccess(`已撤销: ${command.description}`);
+          console.log(`✓ 撤销成功: ${command.description}`);
+        }
+      }
+    };
+
+    // 添加事件监听
+    window.addEventListener('keydown', handleKeyDown);
+
+    // 清理函数
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [sessionData.session_id]); // 依赖 sessionId，确保切换 session 时重新绑定
 
   // 是否正在加载翻译
   const isLoadingTranslations = progress !== undefined && progress < 100;
@@ -285,6 +337,28 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
       return;
     }
 
+    // 📸 在翻译前捕获所有记录的 beforeState
+    const historyRecords: HistoryRecord[] = [];
+    for (const entry of entries) {
+      const record = sessionData.strings.find(
+        (s) =>
+          s.form_id === entry.formId &&
+          s.record_type === entry.recordType &&
+          s.subrecord_type === entry.subrecordType &&
+          s.index === entry.recordIndex,
+      );
+
+      if (record) {
+        const recordId = `${entry.formId}|${entry.recordType}|${entry.subrecordType}|${entry.recordIndex}`;
+        const beforeState = structuredClone(record);
+        historyRecords.push({
+          recordId,
+          beforeState,
+          afterState: beforeState, // 暂时设置为 beforeState，翻译后更新
+        });
+      }
+    }
+
     // 开始AI翻译
     setIsAiTranslating(true);
     setAiProgress(0);
@@ -306,7 +380,7 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
           setAiProgress((completed / total) * 100);
         },
         (_index, recIndex, formId, recordType, subrecordType, translated) => {
-          // Apply回调：更新UI
+          // Apply回调：更新UI（跳过历史记录）
           if (updateStringRecord) {
             updateStringRecord(
               sessionData.session_id,
@@ -316,12 +390,54 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
               recIndex,
               translated,
               "ai", // 标记为AI翻译
+              true, // ⚠️ skipHistory=true：跳过单条历史记录
             );
+          }
+
+          // 更新 historyRecords 中对应记录的 afterState
+          const recordId = `${formId}|${recordType}|${subrecordType}|${recIndex}`;
+          const historyRecord = historyRecords.find((hr) => hr.recordId === recordId);
+          if (historyRecord) {
+            const afterRecord = sessionData.strings.find(
+              (s) =>
+                s.form_id === formId &&
+                s.record_type === recordType &&
+                s.subrecord_type === subrecordType &&
+                s.index === recIndex,
+            );
+            if (afterRecord) {
+              historyRecord.afterState = structuredClone({
+                ...afterRecord,
+                translated_text: translated,
+                translation_status: "ai",
+              });
+            }
           }
         },
         cancellationToken, // 传递取消令牌
         (status) => setAiStatus(status),
       );
+
+      // 📝 翻译完成后，生成一个批量历史记录
+      if (result.translatedCount > 0) {
+        const successfulRecords = historyRecords.filter(
+          (hr) => hr.afterState.translated_text !== hr.beforeState.translated_text,
+        );
+
+        if (successfulRecords.length > 0) {
+          const historyCommand: HistoryCommand = {
+            id: `${Date.now()}-${Math.random().toString(36).substring(7)}`,
+            timestamp: Date.now(),
+            type: 'batch',
+            description: `AI Translate ${successfulRecords.length} items`,
+            sessionId: sessionData.session_id,
+            records: successfulRecords,
+          };
+
+          useHistoryStore.getState().pushCommand(historyCommand);
+          console.log(`📝 AI翻译历史记录已添加: ${successfulRecords.length} 条`);
+        }
+      }
 
       if (result.success) {
         showSuccess(
@@ -367,6 +483,22 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
     if (batchUpdateStringRecords) {
       batchUpdateStringRecords(sessionData.session_id, updates);
       showSuccess(`成功替换 ${updates.length} 条记录，已标记为AI翻译`);
+    }
+  };
+
+  // 处理撤销
+  const handleUndo = () => {
+    const canUndo = useHistoryStore.getState().canUndo(sessionData.session_id);
+    if (!canUndo) {
+      showInfoNotification("没有可撤销的操作");
+      return;
+    }
+
+    const command = useHistoryStore.getState().undo(sessionData.session_id);
+    const revertCommand = useSessionStore.getState().revertCommand;
+    if (command && revertCommand) {
+      revertCommand(command);
+      showSuccess(`已撤销: ${command.description}`);
     }
   };
 
@@ -433,11 +565,32 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
             />
           </Box>
 
+          {/* 撤销按钮 */}
+          <Badge
+            badgeContent={undoCount}
+            color="info"
+            sx={{ ml: "auto" }}
+          >
+            <Tooltip title={undoCount > 0 ? `撤销最近的操作 (Ctrl+Z)` : "没有可撤销的操作"}>
+              <span>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<UndoIcon />}
+                  onClick={handleUndo}
+                  disabled={undoCount === 0}
+                >
+                  撤销
+                </Button>
+              </span>
+            </Tooltip>
+          </Badge>
+
           {/* AI翻译按钮 */}
           <Badge
             badgeContent={selectedCount}
             color="primary"
-            sx={{ ml: "auto" }}
+            sx={{ ml: 1 }}
           >
             <Tooltip
               title={

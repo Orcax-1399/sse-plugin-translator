@@ -45,18 +45,14 @@ export default function WorkspaceAppBar({
         </IconButton>
 
         <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-          游戏Mod翻译器
+          esp translator
         </Typography>
 
         <Typography variant="body2" sx={{ mr: 2, opacity: 0.8 }}>
           {gamePath}
         </Typography>
 
-        <IconButton
-          color="inherit"
-          onClick={onOpenAtomicDb}
-          title="原子数据库"
-        >
+        <IconButton color="inherit" onClick={onOpenAtomicDb} title="原子数据库">
           <StorageIcon />
         </IconButton>
 

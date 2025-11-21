@@ -156,9 +156,16 @@ interface AppState {
 **sessionStore.ts** - Session管理
 ```typescript
 interface SessionState {
-    openedSessions, activeSessionId, pendingChanges
+    openedSessions, activeSessionId
+    pendingChanges: Map<string, Set<string>>    // 未保存修改追踪
+    filterStatus: Map<string, FilterType>        // 筛选状态
+    selectedRows: Map<string, Set<string>>       // 行选择状态
+
     openSession(), closeSession(), switchSession()
-    refreshTranslations(), updateStringRecord()
+    refreshTranslations()
+    updateStringRecord(skipHistory?)             // 支持跳过历史
+    batchUpdateStringRecords()                   // 批量更新
+    revertCommand(command)                       // 撤销恢复
     saveSessionTranslations()
 }
 ```
@@ -191,6 +198,42 @@ interface ApiConfigState {
     activateConfig(id)            // 激活配置
     refreshCurrentApi()           // 刷新当前激活配置
 }
+```
+
+**historyStore.ts** - 历史记录管理
+```typescript
+// 核心类型
+interface HistoryRecord {
+    recordId: string              // 记录唯一标识
+    beforeState: object           // 修改前状态快照
+    afterState: object            // 修改后状态快照
+}
+
+interface HistoryCommand {
+    id: string                    // 命令唯一ID
+    timestamp: number             // 时间戳
+    type: 'single' | 'batch'      // 操作类型
+    description: string           // 描述（如"AI Translate 15 items"）
+    sessionId: string             // 所属Session
+    records: HistoryRecord[]      // 影响的记录列表
+}
+
+// 状态接口
+interface HistoryState {
+    commandStacks: Map<string, HistoryCommand[]>  // sessionId → 命令栈
+
+    pushCommand(command)          // 添加历史命令（自动FIFO）
+    undo(sessionId)               // 撤销并返回命令
+    canUndo(sessionId)            // 检查是否可撤销
+    getUndoCount(sessionId)       // 获取可撤销数量
+    clearSession(sessionId)       // 清理Session历史
+}
+
+// 设计特点
+// - Session隔离：不同插件历史独立管理
+// - FIFO队列：最多保存30条命令，超出自动删除最旧
+// - 批量支持：单条命令可包含多条记录修改
+// - 内存安全：structuredClone深拷贝状态快照
 ```
 
 #### 2. 核心组件 (`components/`)
@@ -299,6 +342,48 @@ Aho-Corasick.find_iter() 查找所有匹配
 返回 "savangard(松加德) awaits!"
     ↓
 increment_usage_async() 统计使用次数
+```
+
+### 6. 历史记录和撤销流程
+```
+== 单条编辑 ==
+用户修改译文 → sessionStore.updateStringRecord()
+    ↓
+捕获 beforeState（structuredClone）
+    ↓
+Immer 更新状态 → 生成 afterState
+    ↓
+historyStore.pushCommand({
+    type: 'single',
+    description: '编辑记录',
+    records: [{ beforeState, afterState }]
+})
+    ↓
+FIFO检查：栈长度 > 30 → shift()删除最旧
+
+== AI批量翻译 ==
+用户触发AI翻译 → 批量捕获所有 beforeState
+    ↓
+逐条调用 updateStringRecord(skipHistory=true)
+    ↓
+翻译完成 → 收集所有 afterState
+    ↓
+historyStore.pushCommand({
+    type: 'batch',
+    description: 'AI Translate 15 items',
+    records: [...所有记录]
+})
+
+== 撤销操作 ==
+用户按 Ctrl+Z / 点击撤销按钮
+    ↓
+historyStore.undo(sessionId) → 返回最近的 HistoryCommand
+    ↓
+sessionStore.revertCommand(command)
+    ↓
+遍历 command.records → 恢复每条的 beforeState
+    ↓
+Immer 批量更新 → UI自动刷新
 ```
 
 ---
@@ -461,8 +546,14 @@ src/
 │   ├── GamePathSelector.tsx
 │   ├── Workspace.tsx
 │   ├── EditorWindow.tsx
-│   └── AtomicDbWindow.tsx  # 原子数据库管理窗口 (新增)
+│   └── AtomicDbWindow.tsx  # 原子数据库管理窗口
 ├── stores/              # Zustand状态管理
+│   ├── appStore.ts      # 全局应用状态
+│   ├── sessionStore.ts  # Session管理
+│   ├── translationStore.ts  # 翻译数据
+│   ├── notificationStore.ts # 通知系统
+│   ├── apiConfigStore.ts    # API配置管理
+│   └── historyStore.ts  # 历史记录管理 (新增)
 ├── types/               # TypeScript类型
 └── utils/               # 工具函数
 
@@ -476,5 +567,5 @@ src-tauri/userdata/
 
 ---
 
-**文档版本**: v0.1.1
-**最后更新**: 2025-11-21
+**文档版本**: v0.1.2
+**最后更新**: 2025-11-22

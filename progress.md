@@ -28,8 +28,9 @@
 | 阶段22 | AI翻译API配置管理模块 | ✅ | 3h |
 | 阶段23 | Settings组件模块化重构 | ✅ | 0.5h |
 | 阶段24 | lib.rs 原子化重构 | ✅ | 0.5h |
+| 阶段25 | 历史记录和撤销功能 | ✅ | 2h |
 
-**累计实际工时**: 63.5小时
+**累计实际工时**: 65.5小时
 
 ---
 
@@ -55,9 +56,57 @@
 - **AI翻译API配置管理模块**（多配置管理、自动保存、唯一激活）
 - **Settings组件模块化重构**（DictionaryExtractionPanel独立，代码量减少74%）
 - **lib.rs原子化重构**（命令模块化，代码量减少86%）
+- **历史记录和撤销功能**（Ctrl+Z撤销、批量操作记录、Session隔离）
 
 ### 🚧 当前阶段
-**阶段24：lib.rs 原子化重构** - ✅ 已完成
+**阶段25：历史记录和撤销功能** - ✅ 已完成
+
+#### 核心功能
+- **撤销（Undo）**：Ctrl+Z快捷键支持
+- **历史栈管理**：30条FIFO队列，防止内存溢出
+- **Session隔离**：不同插件独立历史，互不干扰
+- **批量操作记录**：单次命令可包含多条修改（如AI翻译100条）
+
+#### 关键实现
+
+1. **historyStore.ts** - 新增模块
+   - `HistoryCommand`/`HistoryRecord` 类型定义
+   - `pushCommand()` - 添加历史命令（自动FIFO）
+   - `undo()` - 撤销并返回命令对象
+   - `canUndo()`/`getUndoCount()` - 查询状态
+   - `clearSession()` - Session关闭时清理
+
+2. **SessionPanel.tsx** - 功能增强
+   - Ctrl+Z快捷键绑定（避免输入框内触发）
+   - 撤销按钮UI（Badge显示可撤销数量）
+   - AI翻译批量操作集成
+   - 进度对话框（已完成/总数/百分比）
+   - 支持中途取消翻译
+
+3. **sessionStore.ts** - 扩展方法
+   - `updateStringRecord(skipHistory?)` - 支持跳过历史
+   - `batchUpdateStringRecords()` - 批量更新同时生成历史
+   - `revertCommand()` - 恢复beforeState
+
+4. **types/index.ts** - 新增类型
+   - `HistoryCommand`/`HistoryRecord` 接口
+   - `pendingChanges`/`filterStatus`/`selectedRows` 状态
+
+#### AI翻译流程改进
+- 翻译前：批量捕获所有记录的 `beforeState`
+- 翻译时：跳过单条历史（`skipHistory=true`）
+- 翻译后：生成单条批量历史命令
+- 优势：批量操作作为原子单位，撤销效率高
+
+#### 遵循原则
+- **KISS**：简单的栈操作，无复杂版本控制
+- **内存安全**：FIFO限制（30条）防止栈溢出
+- **用户友好**：标准快捷键Ctrl+Z
+
+---
+
+### 🚧 阶段24 详细说明
+**阶段24：lib.rs 原子化重构**
 
 - **重构目标**：将臃肿的 lib.rs（897行）拆分为模块化结构
 - **代码精简**：`lib.rs` 897行 → 122行 (减少 **86%**)
@@ -360,6 +409,6 @@ CREATE INDEX idx_api_is_active ON api_configs(is_active);
 
 ---
 
-**文档版本**: v0.1.1
-**最后更新**: 2025-11-21
+**文档版本**: v0.1.2
+**最后更新**: 2025-11-22
 **维护者**: orcax

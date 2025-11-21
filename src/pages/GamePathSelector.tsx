@@ -1,7 +1,7 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
   Box,
   Button,
@@ -10,9 +10,9 @@ import {
   Typography,
   Alert,
   CircularProgress,
-} from '@mui/material';
-import FolderOpenIcon from '@mui/icons-material/FolderOpen';
-import { useAppStore } from '../stores/appStore';
+} from "@mui/material";
+import FolderOpenIcon from "@mui/icons-material/FolderOpen";
+import { useAppStore } from "../stores/appStore";
 
 /**
  * 游戏路径选择页面
@@ -26,24 +26,27 @@ export default function GamePathSelector() {
   const [error, setError] = useState<string | null>(null);
 
   // 处理路径选择（统一逻辑）
-  const handlePathSelection = async (selectedPath: string, mode: 'directory' | 'file') => {
+  const handlePathSelection = async (
+    selectedPath: string,
+    mode: "directory" | "file",
+  ) => {
     try {
       setIsValidating(true);
       setError(null);
 
       // 验证路径是否有效
-      const isValid = await invoke<boolean>('validate_game_directory', {
+      const isValid = await invoke<boolean>("validate_game_directory", {
         path: selectedPath,
       });
 
       if (!isValid) {
-        if (mode === 'directory') {
+        if (mode === "directory") {
           setError(
-            '所选目录不是有效的 Skyrim 游戏目录。\n请确保目录下存在 Data/Skyrim.esm 文件。'
+            "所选目录不是有效的 Skyrim 游戏目录。\n请确保目录下存在 Data/Skyrim.esm 文件。",
           );
         } else {
           setError(
-            '所选文件不是有效的插件文件。\n请选择 .esp、.esm 或 .esl 文件。'
+            "所选文件不是有效的插件文件。\n请选择 .esp、.esm 或 .esl 文件。",
           );
         }
         setIsValidating(false);
@@ -54,9 +57,9 @@ export default function GamePathSelector() {
       await setGamePath(selectedPath);
 
       // 跳转到主界面
-      navigate('/workspace');
+      navigate("/workspace");
     } catch (err) {
-      console.error('路径选择失败:', err);
+      console.error("路径选择失败:", err);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsValidating(false);
@@ -71,16 +74,16 @@ export default function GamePathSelector() {
       const selectedPath = await open({
         directory: true,
         multiple: false,
-        title: '选择游戏目录',
+        title: "选择游戏目录",
       });
 
-      if (!selectedPath || typeof selectedPath !== 'string') {
+      if (!selectedPath || typeof selectedPath !== "string") {
         return;
       }
 
-      await handlePathSelection(selectedPath, 'directory');
+      await handlePathSelection(selectedPath, "directory");
     } catch (err) {
-      console.error('选择目录失败:', err);
+      console.error("选择目录失败:", err);
       setError(err instanceof Error ? err.message : String(err));
     }
   };
@@ -92,22 +95,22 @@ export default function GamePathSelector() {
       // 打开文件选择对话框
       const selectedPath = await open({
         multiple: false,
-        title: '选择插件文件',
+        title: "选择插件文件",
         filters: [
           {
-            name: 'Skyrim 插件',
-            extensions: ['esp', 'esm', 'esl'],
+            name: "Skyrim 插件",
+            extensions: ["esp", "esm", "esl"],
           },
         ],
       });
 
-      if (!selectedPath || typeof selectedPath !== 'string') {
+      if (!selectedPath || typeof selectedPath !== "string") {
         return;
       }
 
-      await handlePathSelection(selectedPath, 'file');
+      await handlePathSelection(selectedPath, "file");
     } catch (err) {
-      console.error('选择文件失败:', err);
+      console.error("选择文件失败:", err);
       setError(err instanceof Error ? err.message : String(err));
     }
   };
@@ -115,18 +118,18 @@ export default function GamePathSelector() {
   return (
     <Box
       sx={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        minHeight: '100vh',
-        bgcolor: 'background.default',
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        minHeight: "100vh",
+        bgcolor: "background.default",
         p: 3,
       }}
     >
-      <Card sx={{ maxWidth: 500, width: '100%' }}>
+      <Card sx={{ maxWidth: 500, width: "100%" }}>
         <CardContent sx={{ p: 4 }}>
           <Typography variant="h4" component="h1" gutterBottom align="center">
-            游戏Mod翻译器
+            esp translator
           </Typography>
 
           <Typography
@@ -140,29 +143,45 @@ export default function GamePathSelector() {
           </Typography>
 
           {error && (
-            <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
+            <Alert
+              severity="error"
+              sx={{ mb: 3 }}
+              onClose={() => setError(null)}
+            >
               {error}
             </Alert>
           )}
 
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
             <Button
               variant="contained"
               size="large"
               fullWidth
-              startIcon={isValidating ? <CircularProgress size={20} /> : <FolderOpenIcon />}
+              startIcon={
+                isValidating ? (
+                  <CircularProgress size={20} />
+                ) : (
+                  <FolderOpenIcon />
+                )
+              }
               onClick={handleSelectDirectory}
               disabled={isValidating}
               sx={{ py: 1.5 }}
             >
-              {isValidating ? '验证中...' : '选择游戏目录（工作区模式）'}
+              {isValidating ? "验证中..." : "选择游戏目录（工作区模式）"}
             </Button>
 
             <Button
               variant="outlined"
               size="large"
               fullWidth
-              startIcon={isValidating ? <CircularProgress size={20} /> : <FolderOpenIcon />}
+              startIcon={
+                isValidating ? (
+                  <CircularProgress size={20} />
+                ) : (
+                  <FolderOpenIcon />
+                )
+              }
               onClick={handleSelectFile}
               disabled={isValidating}
               sx={{ py: 1.5 }}

@@ -58,6 +58,30 @@
 - ✅ 适合中小型应用的状态管理需求
 - ✅ 学习成本低，易于团队协作
 
+**状态模块划分**：
+| Store | 职责 | 持久化 |
+|-------|------|--------|
+| appStore | 全局应用状态（gamePath, plugins） | settings.json |
+| sessionStore | Session管理和翻译数据 | translations.db |
+| translationStore | 翻译数据库操作封装 | translations.db |
+| notificationStore | 通知系统 | 无 |
+| apiConfigStore | AI配置管理 | api.db |
+| historyStore | 历史记录（撤销功能） | 内存 |
+
+### 历史记录系统
+- **实现方式**：Zustand + 内存FIFO队列
+- **设计模式**：Command Pattern（命令模式）
+- **核心特点**：
+  - Session隔离：不同插件独立历史栈
+  - FIFO限制：最多30条命令，防止内存溢出
+  - 批量支持：单条命令可包含多条记录（如AI翻译100条）
+  - 深拷贝：使用 `structuredClone()` 保存状态快照
+
+**未来扩展预留**：
+- 持久化历史（SQLite存储）
+- Redo功能（重做栈）
+- 历史记录浏览器
+
 ### 不可变更新
 - **Immer** `10.2.0`
   - 现代化的不可变状态管理库
@@ -222,6 +246,6 @@ src-tauri/src/
 
 ---
 
-**文档版本**: v0.1.0
-**更新日期**: 2025-11-14
+**文档版本**: v0.1.1
+**更新日期**: 2025-11-22
 **维护者**: orcax
