@@ -431,13 +431,29 @@ CREATE INDEX idx_atomic_source ON atomic_translations(source_type);
 ```
 src-tauri/src/
 ├── main.rs              # 应用入口
-├── lib.rs               # Tauri命令注册
+├── lib.rs               # Tauri命令注册（精简版，仅122行）
 ├── settings.rs          # 配置管理
 ├── scanner.rs           # 插件扫描
 ├── translation_db.rs    # 翻译数据库
 ├── esp_service.rs       # ESP提取服务
 ├── plugin_session.rs    # Session管理
-└── atomic_db.rs         # 原子数据库 (新增)
+├── atomic_db.rs         # 原子数据库
+├── api_manage.rs        # API配置管理
+├── search_history.rs    # 搜索历史
+├── commands/            # Tauri命令模块（新增）
+│   ├── mod.rs           # 模块导出
+│   ├── settings.rs      # 配置命令
+│   ├── scanner.rs       # 扫描命令
+│   ├── translation.rs   # 翻译数据库命令
+│   ├── session.rs       # Session管理命令
+│   ├── esp.rs           # ESP提取命令
+│   ├── editor.rs        # 编辑窗口命令
+│   ├── atomic.rs        # 原子数据库命令
+│   ├── api_config.rs    # API配置命令
+│   └── search_history.rs # 搜索历史命令
+└── utils/               # 工具模块（新增）
+    ├── mod.rs
+    └── paths.rs         # 统一路径函数
 
 src/
 ├── components/          # React组件
@@ -460,5 +476,5 @@ src-tauri/userdata/
 
 ---
 
-**文档版本**: v0.1.0
-**最后更新**: 2025-11-15
+**文档版本**: v0.1.1
+**最后更新**: 2025-11-21

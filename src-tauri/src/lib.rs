@@ -1,6 +1,7 @@
 mod api_manage;
 mod atomic_db;
 mod bsa_logger;
+mod commands;
 mod constants;
 mod esp_service;
 mod plugin_session;
@@ -8,889 +9,114 @@ mod scanner;
 mod search_history;
 mod settings;
 mod translation_db;
+mod utils;
 
-use api_manage::{ApiConfig, ApiConfigDB};
-use atomic_db::{AtomSource, AtomTranslation, AtomicDB};
-use esp_service::{extract_base_dictionary, get_base_plugins, ExtractionStats};
-use search_history::{SearchHistoryDB, SearchHistoryEntry};
-use plugin_session::{PluginSessionManager, PluginStringsResponse, SessionInfo, StringRecord};
-use scanner::{scan_plugins, validate_game_path, PluginInfo};
-use serde::Serialize;
-use settings::{read_settings, write_settings, Settings};
+use api_manage::ApiConfigDB;
+use atomic_db::AtomicDB;
+use plugin_session::{PluginSessionManager, StringRecord};
+use search_history::SearchHistoryDB;
 use std::collections::HashMap;
 use std::sync::Mutex;
-use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
-use translation_db::{FormIdentifier, Translation, TranslationDB, TranslationStats};
-
-/// 翻译进度通知 Payload
-#[derive(Debug, Clone, Serialize)]
-struct TranslationProgressPayload {
-    session_id: String,
-    current: usize,
-    total: usize,
-    percentage: f64,
-}
-
-/// 获取应用配置
-#[tauri::command]
-fn get_settings() -> Result<Settings, String> {
-    read_settings()
-}
-
-/// 设置游戏路径
-#[tauri::command]
-fn set_game_path(path: String) -> Result<(), String> {
-    let mut settings = read_settings()?;
-    settings.game = Some(path);
-    write_settings(&settings)?;
-    Ok(())
-}
-
-/// 验证游戏目录是否有效
-#[tauri::command]
-fn validate_game_directory(path: String) -> Result<bool, String> {
-    validate_game_path(&path)
-}
-
-/// 获取插件列表
-#[tauri::command]
-fn get_plugin_list() -> Result<Vec<PluginInfo>, String> {
-    let settings = read_settings()?;
-
-    match settings.game {
-        Some(game_path) => scan_plugins(&game_path),
-        None => Err("未设置游戏路径".to_string()),
-    }
-}
-
-// ==================== 翻译词典相关命令 ====================
-
-/// 保存单条翻译
-#[tauri::command]
-fn save_translation(
-    db: tauri::State<Mutex<TranslationDB>>,
-    translation: Translation,
-) -> Result<(), String> {
-    let db = db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
-    db.save_translation(translation)
-        .map_err(|e| format!("保存翻译失败: {}", e))
-}
-
-/// 批量保存翻译
-#[tauri::command]
-fn batch_save_translations(
-    db: tauri::State<Mutex<TranslationDB>>,
-    translations: Vec<Translation>,
-) -> Result<(), String> {
-    let db = db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
-    db.batch_save_translations(translations)
-        .map_err(|e| format!("批量保存翻译失败: {}", e))
-}
-
-/// 查询单条翻译
-#[tauri::command]
-fn get_translation(
-    db: tauri::State<Mutex<TranslationDB>>,
-    form_id: String,
-    record_type: String,
-    subrecord_type: String,
-    index: u32,
-) -> Result<Option<Translation>, String> {
-    let db = db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
-    db.get_translation(&form_id, &record_type, &subrecord_type, index)
-        .map_err(|e| format!("查询翻译失败: {}", e))
-}
-
-/// 批量查询翻译
-#[tauri::command]
-fn batch_query_translations(
-    db: tauri::State<Mutex<TranslationDB>>,
-    forms: Vec<FormIdentifier>,
-) -> Result<Vec<Translation>, String> {
-    let db = db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
-    db.batch_query_translations(forms)
-        .map_err(|e| format!("批量查询翻译失败: {}", e))
-}
-
-/// 批量查询翻译（带进度通知）
-#[tauri::command]
-fn batch_query_translations_with_progress(
-    app: tauri::AppHandle,
-    db: tauri::State<Mutex<TranslationDB>>,
-    session_id: String,
-    forms: Vec<FormIdentifier>,
-) -> Result<Vec<Translation>, String> {
-    let db = db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
-
-    // 使用闭包捕获 app 和 session_id 来发送进度事件
-    let session_id_clone = session_id.clone();
-    let result = db.batch_query_translations_with_progress(forms, move |current, total| {
-        let percentage = if total > 0 {
-            (current as f64 / total as f64) * 100.0
-        } else {
-            0.0
-        };
-
-        let payload = TranslationProgressPayload {
-            session_id: session_id_clone.clone(),
-            current,
-            total,
-            percentage,
-        };
-
-        // 发送进度事件（忽略发送失败）
-        let _ = app.emit("translation_progress", payload);
-    });
-
-    result.map_err(|e| format!("批量查询翻译失败: {}", e))
-}
-
-/// 获取翻译统计信息
-#[tauri::command]
-fn get_translation_statistics(
-    db: tauri::State<Mutex<TranslationDB>>,
-) -> Result<TranslationStats, String> {
-    let db = db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
-    db.get_statistics()
-        .map_err(|e| format!("获取统计信息失败: {}", e))
-}
-
-/// 清除指定插件的翻译
-#[tauri::command]
-fn clear_plugin_translations(
-    db: tauri::State<Mutex<TranslationDB>>,
-    plugin_name: String,
-) -> Result<usize, String> {
-    let db = db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
-    db.clear_plugin_translations(&plugin_name)
-        .map_err(|e| format!("清除插件翻译失败: {}", e))
-}
-
-/// 清除所有翻译（慎用）
-#[tauri::command]
-fn clear_all_translations(db: tauri::State<Mutex<TranslationDB>>) -> Result<usize, String> {
-    let db = db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
-    db.clear_all_translations()
-        .map_err(|e| format!("清除所有翻译失败: {}", e))
-}
-
-/// 清除基础词典数据（9个官方插件）
-#[tauri::command]
-fn clear_base_dictionary(db: tauri::State<Mutex<TranslationDB>>) -> Result<usize, String> {
-    let db = db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
-    db.clear_base_dictionary()
-        .map_err(|e| format!("清除基础词典失败: {}", e))
-}
-
-// ==================== 插件 Session 管理命令 ====================
-
-/// 加载插件 Session（自动缓存复用）
-#[tauri::command]
-fn load_plugin_session(
-    session_manager: tauri::State<Mutex<PluginSessionManager>>,
-    plugin_path: String,
-) -> Result<PluginStringsResponse, String> {
-    use std::path::PathBuf;
-
-    let mut manager = session_manager
-        .lock()
-        .map_err(|e| format!("Session 管理器锁定失败: {}", e))?;
-
-    manager.get_or_load(PathBuf::from(plugin_path))
-}
-
-/// 关闭插件 Session
-#[tauri::command]
-fn close_plugin_session(
-    session_manager: tauri::State<Mutex<PluginSessionManager>>,
-    session_id: String,
-) -> Result<(), String> {
-    let mut manager = session_manager
-        .lock()
-        .map_err(|e| format!("Session 管理器锁定失败: {}", e))?;
-
-    manager.close(&session_id)
-}
-
-/// 列出所有活跃的 Session
-#[tauri::command]
-fn list_plugin_sessions(
-    session_manager: tauri::State<Mutex<PluginSessionManager>>,
-) -> Result<Vec<SessionInfo>, String> {
-    let manager = session_manager
-        .lock()
-        .map_err(|e| format!("Session 管理器锁定失败: {}", e))?;
-
-    Ok(manager.list_sessions())
-}
-
-/// 应用翻译到插件文件
-#[tauri::command]
-fn apply_translations(
-    session_manager: tauri::State<Mutex<PluginSessionManager>>,
-    session_id: String,
-    translations: Vec<StringRecord>,
-    save_as: Option<String>,
-) -> Result<String, String> {
-    let mut manager = session_manager
-        .lock()
-        .map_err(|e| format!("Session 管理器锁定失败: {}", e))?;
-
-    manager.apply_translations(&session_id, translations, save_as)
-}
-
-// ==================== ESP 字典提取相关命令 ====================
-
-/// 获取基础插件列表
-#[tauri::command]
-fn get_base_plugins_list() -> Vec<String> {
-    get_base_plugins()
-}
-
-/// 从游戏 Data 目录提取基础字典
-#[tauri::command]
-fn extract_dictionary(
-    db: tauri::State<Mutex<TranslationDB>>,
-    data_dir: String,
-) -> Result<ExtractionStats, String> {
-    use std::path::Path;
-
-    // 提取字符串
-    let (translations, stats) = extract_base_dictionary(Path::new(&data_dir))?;
-
-    // 批量保存到数据库
-    if !translations.is_empty() {
-        let db = db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
-        db.batch_save_translations(translations)
-            .map_err(|e| format!("保存到数据库失败: {}", e))?;
-    }
-
-    Ok(stats)
-}
-
-// ==================== 编辑窗口相关命令 ====================
-
-/// 打开编辑窗口
-#[tauri::command]
-async fn open_editor_window(
-    app: tauri::AppHandle,
-    editor_data_store: tauri::State<'_, Mutex<HashMap<String, StringRecord>>>,
-    record: StringRecord,
-) -> Result<String, String> {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    use std::io::Write;
-
-    let log = |msg: &str| {
-        if let Ok(mut file) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("startup.log")
-        {
-            let _ = writeln!(
-                file,
-                "[{}] [EditorWindow] {}",
-                chrono::Local::now().format("%H:%M:%S"),
-                msg
-            );
-        }
-    };
-
-    // 生成唯一的窗口标签（使用时间戳）
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
-    let window_label = format!("editor-{}", timestamp);
-
-    log(&format!(
-        "Preparing editor window {} (form_id: {})",
-        window_label, record.form_id
-    ));
-
-    println!("→ 准备创建编辑窗口: {}", window_label);
-    println!("  form_id: {}", record.form_id);
-
-    // ✅ 先存储数据
-    {
-        match editor_data_store.lock() {
-            Ok(mut store) => {
-                store.insert(window_label.clone(), record.clone());
-                log("Record stored in editor data store");
-                println!("  ✓ 数据已存储到内存");
-            }
-            Err(e) => {
-                log(&format!("Failed to lock editor data store: {}", e));
-                println!("  ❌ 锁定数据存储失败: {}", e);
-                return Err(format!("锁定数据存储失败: {}", e));
-            }
-        }
-    }
-
-    log("Creating editor WebView window");
-    println!("  → 开始异步创建窗口...");
-
-    // ✅ 直接在异步上下文中创建窗口
-    let builder = WebviewWindowBuilder::new(&app, &window_label, WebviewUrl::App("/editor".into()))
-        .title("编辑翻译")
-        .inner_size(900.0, 600.0)
-        .resizable(true)
-        .additional_browser_args("--disable-gpu --disable-d3d11")
-        .center();
-
-    // ✅ 使用 ? 操作符，但立即返回，不阻塞
-    log("Invoking builder.build()");
-    match builder.build() {
-        Ok(_) => {
-            log("Editor window created successfully");
-            println!("  ✓ 编辑窗口创建成功: {}", window_label);
-            Ok(window_label)
-        }
-        Err(e) => {
-            log(&format!("Editor window creation failed: {}", e));
-            println!("  ❌ 编辑窗口创建失败: {}", e);
-
-            // 清理已存储的数据
-            if let Ok(mut store) = editor_data_store.lock() {
-                store.remove(&window_label);
-            }
-
-            Err(format!("创建编辑窗口失败: {}", e))
-        }
-    }
-}
-
-/// 获取编辑窗口数据（前端准备好后调用）
-#[tauri::command]
-fn get_editor_data(
-    window_label: String,
-    editor_data_store: tauri::State<Mutex<HashMap<String, StringRecord>>>,
-) -> Result<StringRecord, String> {
-    println!("→ 前端请求编辑数据: {}", window_label);
-
-    let record = {
-        match editor_data_store.lock() {
-            Ok(mut store) => {
-                println!("  ✓ 成功锁定数据存储");
-                println!("  当前存储的窗口数: {}", store.len());
-
-                // 取出数据并移除（避免内存泄漏）
-                match store.remove(&window_label) {
-                    Some(rec) => {
-                        println!("  ✓ 找到数据 (form_id: {})", rec.form_id);
-                        Ok(rec)
-                    }
-                    None => {
-                        println!("  ❌ 未找到窗口数据");
-                        println!("  可用的窗口标签: {:?}", store.keys().collect::<Vec<_>>());
-                        Err(format!("未找到窗口数据: {}", window_label))
-                    }
-                }
-            }
-            Err(e) => {
-                println!("  ❌ 锁定数据存储失败: {}", e);
-                Err(format!("锁定数据存储失败: {}", e))
-            }
-        }
-    }?;
-
-    println!("✓ 编辑数据已返回: {}", window_label);
-
-    Ok(record)
-}
-
-/// 查询单词翻译（用于编辑器参考）
-#[tauri::command]
-fn query_word_translations(
-    db: tauri::State<Mutex<TranslationDB>>,
-    text: String,
-    limit: usize,
-) -> Result<Vec<Translation>, String> {
-    let db = db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
-    db.query_by_text(&text, limit)
-        .map_err(|e| format!("查询单词翻译失败: {}", e))
-}
-
-// ==================== 原子数据库相关命令 ====================
-
-/// 打开原子数据库管理窗口
-#[tauri::command]
-async fn open_atomic_db_window(app: tauri::AppHandle) -> Result<String, String> {
-    use std::io::Write;
-
-    let log = |msg: &str| {
-        if let Ok(mut file) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("startup.log")
-        {
-            let _ = writeln!(
-                file,
-                "[{}] [AtomicDBWindow] {}",
-                chrono::Local::now().format("%H:%M:%S"),
-                msg
-            );
-        }
-    };
-
-    let window_label = "atomic-db-window";
-    log("open_atomic_db_window called");
-
-    // 检查窗口是否已经打开
-    if let Some(window) = app.get_webview_window(window_label) {
-        log("Existing atomic DB window found, focusing");
-        // 窗口已存在，聚焦它
-        window
-            .set_focus()
-            .map_err(|e| format!("窗口聚焦失败: {}", e))?;
-        return Ok(window_label.to_string());
-    }
-
-    log("Creating new atomic DB window via WebviewWindowBuilder");
-    // 创建新窗口
-    let builder =
-        WebviewWindowBuilder::new(&app, window_label, WebviewUrl::App("/atomic-db".into()))
-            .title("原子数据库管理")
-            .inner_size(1200.0, 800.0)
-            .resizable(true)
-            .additional_browser_args("--disable-gpu --disable-d3d11")
-            .center();
-
-    log("Invoking builder.build() for atomic DB window");
-    match builder.build() {
-        Ok(_) => {
-            log("Atomic DB window created successfully");
-            Ok(window_label.to_string())
-        }
-        Err(e) => {
-            log(&format!("Atomic DB window creation failed: {}", e));
-            Err(format!("创建原子数据库窗口失败: {}", e))
-        }
-    }
-}
-
-/// 获取所有原子翻译
-#[tauri::command]
-fn get_all_atoms(atomic_db: tauri::State<Mutex<AtomicDB>>) -> Result<Vec<AtomTranslation>, String> {
-    let db = atomic_db
-        .lock()
-        .map_err(|e| format!("数据库锁定失败: {}", e))?;
-    db.get_all_atoms()
-        .map_err(|e| format!("获取原子翻译失败: {}", e))
-}
-
-/// 添加原子翻译
-#[tauri::command]
-fn add_atom_translation(
-    atomic_db: tauri::State<Mutex<AtomicDB>>,
-    original: String,
-    translated: String,
-    source: String,
-) -> Result<(), String> {
-    let db = atomic_db
-        .lock()
-        .map_err(|e| format!("数据库锁定失败: {}", e))?;
-
-    let atom_source = match source.as_str() {
-        "base" => AtomSource::Base,
-        "ai" => AtomSource::AI,
-        _ => AtomSource::Manual,
-    };
-
-    db.upsert_atom(&original, &translated, atom_source)
-        .map_err(|e| format!("添加原子翻译失败: {}", e))
-}
-
-/// 删除原子翻译
-#[tauri::command]
-fn delete_atom_translation(
-    atomic_db: tauri::State<Mutex<AtomicDB>>,
-    original: String,
-) -> Result<(), String> {
-    let db = atomic_db
-        .lock()
-        .map_err(|e| format!("数据库锁定失败: {}", e))?;
-    db.delete_atom(&original)
-        .map_err(|e| format!("删除原子翻译失败: {}", e))
-}
-
-/// 使用原子库替换文本
-#[tauri::command]
-fn replace_text_with_atoms(
-    atomic_db: tauri::State<Mutex<AtomicDB>>,
-    text: String,
-) -> Result<String, String> {
-    let db = atomic_db
-        .lock()
-        .map_err(|e| format!("数据库锁定失败: {}", e))?;
-    Ok(db.replace_with_atoms(&text))
-}
-
-// ==================== API配置管理相关命令 ====================
-
-/// 获取所有API配置
-#[tauri::command]
-fn get_api_configs(api_db: tauri::State<Mutex<ApiConfigDB>>) -> Result<Vec<ApiConfig>, String> {
-    let db = api_db
-        .lock()
-        .map_err(|e| format!("数据库锁定失败: {}", e))?;
-    db.get_all_configs()
-        .map_err(|e| format!("获取API配置失败: {}", e))
-}
-
-/// 创建新的API配置
-#[tauri::command]
-fn create_api_config(
-    api_db: tauri::State<Mutex<ApiConfigDB>>,
-    name: String,
-) -> Result<i64, String> {
-    let db = api_db
-        .lock()
-        .map_err(|e| format!("数据库锁定失败: {}", e))?;
-    db.create_config(name)
-        .map_err(|e| format!("创建API配置失败: {}", e))
-}
-
-/// 更新API配置
-#[tauri::command]
-fn update_api_config(
-    api_db: tauri::State<Mutex<ApiConfigDB>>,
-    id: i64,
-    config: ApiConfig,
-) -> Result<(), String> {
-    let db = api_db
-        .lock()
-        .map_err(|e| format!("数据库锁定失败: {}", e))?;
-    db.update_config(id, &config)
-        .map_err(|e| format!("更新API配置失败: {}", e))
-}
-
-/// 删除API配置
-#[tauri::command]
-fn delete_api_config(api_db: tauri::State<Mutex<ApiConfigDB>>, id: i64) -> Result<(), String> {
-    let db = api_db
-        .lock()
-        .map_err(|e| format!("数据库锁定失败: {}", e))?;
-    db.delete_config(id)
-        .map_err(|e| format!("删除API配置失败: {}", e))
-}
-
-/// 激活指定的API配置
-#[tauri::command]
-fn activate_api_config(api_db: tauri::State<Mutex<ApiConfigDB>>, id: i64) -> Result<(), String> {
-    let db = api_db
-        .lock()
-        .map_err(|e| format!("数据库锁定失败: {}", e))?;
-    db.activate_config(id)
-        .map_err(|e| format!("激活API配置失败: {}", e))
-}
-
-/// 获取当前激活的API配置
-#[tauri::command]
-fn get_current_api(api_db: tauri::State<Mutex<ApiConfigDB>>) -> Result<Option<ApiConfig>, String> {
-    let db = api_db
-        .lock()
-        .map_err(|e| format!("数据库锁定失败: {}", e))?;
-    db.get_current_config()
-        .map_err(|e| format!("获取当前API配置失败: {}", e))
-}
-
-// ==================== 搜索历史相关命令 ====================
-
-/// 批量保存搜索历史
-#[tauri::command]
-fn save_search_history(
-    search_history_db: tauri::State<Mutex<SearchHistoryDB>>,
-    entries: Vec<SearchHistoryEntry>,
-) -> Result<(), String> {
-    let db = search_history_db
-        .lock()
-        .map_err(|e| format!("数据库锁定失败: {}", e))?;
-    db.batch_upsert(entries)
-        .map_err(|e| format!("保存搜索历史失败: {}", e))
-}
-
-/// 获取所有搜索历史
-#[tauri::command]
-fn get_search_history(
-    search_history_db: tauri::State<Mutex<SearchHistoryDB>>,
-) -> Result<Vec<SearchHistoryEntry>, String> {
-    let db = search_history_db
-        .lock()
-        .map_err(|e| format!("数据库锁定失败: {}", e))?;
-    db.get_all()
-        .map_err(|e| format!("获取搜索历史失败: {}", e))
-}
+use tauri::{WebviewUrl, WebviewWindowBuilder};
+use translation_db::TranslationDB;
+use utils::paths::{get_api_db_path, get_atomic_db_path, get_db_path, get_search_history_db_path};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Helper for logging
-    let log = |msg: &str| {
-        use std::io::Write;
-        if let Ok(mut file) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("startup.log")
-        {
-            let _ = writeln!(
-                file,
-                "[{}] {}",
-                chrono::Local::now().format("%H:%M:%S"),
-                msg
-            );
-        }
-    };
-
-    log("Entering run()");
-
     // 初始化翻译数据库
-    log("Initializing TranslationDB...");
     let db_path = get_db_path();
-    log(&format!("DB Path: {:?}", db_path));
     let translation_db = TranslationDB::new(db_path).expect("无法初始化翻译数据库");
 
     // 初始化原子数据库
-    log("Initializing AtomicDB...");
     let atomic_db_path = get_atomic_db_path();
     let atomic_db = AtomicDB::new(atomic_db_path.to_str().expect("路径转换失败"))
         .expect("无法初始化原子数据库");
 
     // 初始化API配置数据库
-    log("Initializing ApiConfigDB...");
     let api_db_path = get_api_db_path();
     let api_db = ApiConfigDB::new(api_db_path.to_str().expect("路径转换失败"))
         .expect("无法初始化API配置数据库");
 
     // 初始化搜索历史数据库
-    log("Initializing SearchHistoryDB...");
     let search_history_db_path = get_search_history_db_path();
-    let search_history_db = SearchHistoryDB::new(search_history_db_path.to_str().expect("路径转换失败"))
-        .expect("无法初始化搜索历史数据库");
+    let search_history_db =
+        SearchHistoryDB::new(search_history_db_path.to_str().expect("路径转换失败"))
+            .expect("无法初始化搜索历史数据库");
 
     // 初始化插件 Session 管理器
-    log("Initializing SessionManager...");
     let session_manager = PluginSessionManager::new();
 
     // 初始化编辑窗口数据存储（用于窗口间数据传递）
     let editor_data_store: Mutex<HashMap<String, StringRecord>> = Mutex::new(HashMap::new());
 
-    // Register panic hook
-    std::panic::set_hook(Box::new(|info| {
-        use std::io::Write;
-        if let Ok(mut file) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("startup.log")
-        {
-            let _ = writeln!(
-                file,
-                "[{}] PANIC: {:?}",
-                chrono::Local::now().format("%H:%M:%S"),
-                info
-            );
-        }
-    }));
+    tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .manage(Mutex::new(translation_db))
+        .manage(Mutex::new(atomic_db))
+        .manage(Mutex::new(api_db))
+        .manage(Mutex::new(search_history_db))
+        .manage(Mutex::new(session_manager))
+        .manage(editor_data_store)
+        .setup(|app| {
+            // 创建主窗口
+            let window_builder =
+                WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                    .title("sse-plugin-translator")
+                    .inner_size(800.0, 600.0)
+                    .resizable(true)
+                    .center()
+                    .additional_browser_args("--disable-gpu --disable-d3d11");
 
-    log("Building Tauri app...");
-    let mut builder = tauri::Builder::default();
-    log("Builder created");
-
-    log("Adding opener plugin...");
-    builder = builder.plugin(tauri_plugin_opener::init());
-
-    log("Adding dialog plugin...");
-    builder = builder.plugin(tauri_plugin_dialog::init());
-
-    log("Managing states...");
-    builder = builder.manage(Mutex::new(translation_db));
-    builder = builder.manage(Mutex::new(atomic_db));
-    builder = builder.manage(Mutex::new(api_db));
-    builder = builder.manage(Mutex::new(search_history_db));
-    builder = builder.manage(Mutex::new(session_manager));
-    builder = builder.manage(editor_data_store);
-
-    log("Setting up setup hook...");
-    builder = builder.setup(|app| {
-        // Helper for logging inside setup
-        let log = |msg: &str| {
-            use std::io::Write;
-            if let Ok(mut file) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open("startup.log")
-            {
-                let _ = writeln!(
-                    file,
-                    "[{}] [SETUP] {}",
-                    chrono::Local::now().format("%H:%M:%S"),
-                    msg
-                );
-            }
-        };
-
-        log("Setup hook started");
-
-        let main_window = app.get_webview_window("main");
-        if let Some(_window) = main_window {
-            log("Main window found");
-            // window.open_devtools(); // Optional: open devtools for debugging
-        } else {
-            log("Main window NOT found (it might be created later)");
-        }
-
-        log("Manual window creation starting...");
-        let window_builder =
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                .title("sse-plugin-translator")
-                .inner_size(800.0, 600.0)
-                .resizable(true)
-                .center()
-                .additional_browser_args("--disable-gpu --disable-d3d11");
-
-        match window_builder.build() {
-            Ok(_) => log("Window created successfully"),
-            Err(e) => log(&format!("Window creation failed: {}", e)),
-        }
-
-        log("Setup hook finished");
-        Ok(())
-    });
-
-    log("Registering invoke handler...");
-    builder = builder.invoke_handler(tauri::generate_handler![
-        get_settings,
-        set_game_path,
-        validate_game_directory,
-        get_plugin_list,
-        save_translation,
-        batch_save_translations,
-        get_translation,
-        batch_query_translations,
-        batch_query_translations_with_progress,
-        get_translation_statistics,
-        clear_plugin_translations,
-        clear_all_translations,
-        clear_base_dictionary,
-        load_plugin_session,
-        close_plugin_session,
-        list_plugin_sessions,
-        apply_translations,
-        get_base_plugins_list,
-        extract_dictionary,
-        open_editor_window,
-        get_editor_data,
-        query_word_translations,
-        open_atomic_db_window,
-        get_all_atoms,
-        add_atom_translation,
-        delete_atom_translation,
-        replace_text_with_atoms,
-        get_api_configs,
-        create_api_config,
-        update_api_config,
-        delete_api_config,
-        activate_api_config,
-        get_current_api,
-        save_search_history,
-        get_search_history
-    ]);
-
-    log("Running app...");
-    builder
+            let _ = window_builder.build();
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            // 配置管理
+            commands::get_settings,
+            commands::set_game_path,
+            // 插件扫描
+            commands::validate_game_directory,
+            commands::get_plugin_list,
+            // 翻译数据库
+            commands::save_translation,
+            commands::batch_save_translations,
+            commands::get_translation,
+            commands::batch_query_translations,
+            commands::batch_query_translations_with_progress,
+            commands::get_translation_statistics,
+            commands::clear_plugin_translations,
+            commands::clear_all_translations,
+            commands::clear_base_dictionary,
+            commands::query_word_translations,
+            // Session 管理
+            commands::load_plugin_session,
+            commands::close_plugin_session,
+            commands::list_plugin_sessions,
+            commands::apply_translations,
+            // ESP 提取
+            commands::get_base_plugins_list,
+            commands::extract_dictionary,
+            // 编辑窗口
+            commands::open_editor_window,
+            commands::get_editor_data,
+            // 原子数据库
+            commands::open_atomic_db_window,
+            commands::get_all_atoms,
+            commands::add_atom_translation,
+            commands::delete_atom_translation,
+            commands::replace_text_with_atoms,
+            // API 配置
+            commands::get_api_configs,
+            commands::create_api_config,
+            commands::update_api_config,
+            commands::delete_api_config,
+            commands::activate_api_config,
+            commands::get_current_api,
+            // 搜索历史
+            commands::save_search_history,
+            commands::get_search_history
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
-
-    log("Tauri app run finished (unexpected if loop)");
-}
-
-/// 获取数据库文件路径
-fn get_db_path() -> std::path::PathBuf {
-    let userdata_dir = if cfg!(debug_assertions) {
-        // 开发模式：项目根目录
-        std::env::current_dir()
-            .expect("无法获取当前目录")
-            .join("userdata")
-    } else {
-        // 生产模式：可执行文件同级目录
-        std::env::current_exe()
-            .expect("无法获取可执行文件路径")
-            .parent()
-            .expect("无法获取父目录")
-            .join("userdata")
-    };
-
-    // 确保userdata目录存在
-    if !userdata_dir.exists() {
-        std::fs::create_dir_all(&userdata_dir).expect("无法创建userdata目录");
-    }
-
-    userdata_dir.join("translations.db")
-}
-
-/// 获取原子数据库文件路径
-fn get_atomic_db_path() -> std::path::PathBuf {
-    let userdata_dir = if cfg!(debug_assertions) {
-        // 开发模式：项目根目录
-        std::env::current_dir()
-            .expect("无法获取当前目录")
-            .join("userdata")
-    } else {
-        // 生产模式：可执行文件同级目录
-        std::env::current_exe()
-            .expect("无法获取可执行文件路径")
-            .parent()
-            .expect("无法获取父目录")
-            .join("userdata")
-    };
-
-    // 确保userdata目录存在
-    if !userdata_dir.exists() {
-        std::fs::create_dir_all(&userdata_dir).expect("无法创建userdata目录");
-    }
-
-    userdata_dir.join("atomic_translations.db")
-}
-
-/// 获取API配置数据库文件路径
-fn get_api_db_path() -> std::path::PathBuf {
-    let userdata_dir = if cfg!(debug_assertions) {
-        // 开发模式：项目根目录
-        std::env::current_dir()
-            .expect("无法获取当前目录")
-            .join("userdata")
-    } else {
-        // 生产模式：可执行文件同级目录
-        std::env::current_exe()
-            .expect("无法获取可执行文件路径")
-            .parent()
-            .expect("无法获取父目录")
-            .join("userdata")
-    };
-
-    // 确保userdata目录存在
-    if !userdata_dir.exists() {
-        std::fs::create_dir_all(&userdata_dir).expect("无法创建userdata目录");
-    }
-
-    userdata_dir.join("api.db")
-}
-
-/// 获取搜索历史数据库文件路径
-fn get_search_history_db_path() -> std::path::PathBuf {
-    let userdata_dir = if cfg!(debug_assertions) {
-        std::env::current_dir()
-            .expect("无法获取当前目录")
-            .join("userdata")
-    } else {
-        std::env::current_exe()
-            .expect("无法获取可执行文件路径")
-            .parent()
-            .expect("无法获取父目录")
-            .join("userdata")
-    };
-
-    if !userdata_dir.exists() {
-        std::fs::create_dir_all(&userdata_dir).expect("无法创建userdata目录");
-    }
-
-    userdata_dir.join("search_history.db")
 }
