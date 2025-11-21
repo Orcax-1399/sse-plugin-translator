@@ -22,6 +22,7 @@ import SaveIcon from "@mui/icons-material/Save";
 import TranslateIcon from "@mui/icons-material/Translate";
 import type { PluginStringsResponse } from "../types";
 import StringTable from "./StringTable";
+import ReplaceDialog from "./workspace/ReplaceDialog";
 import { useSessionStore } from "../stores/sessionStore";
 import { useApiConfigStore } from "../stores/apiConfigStore";
 import {
@@ -67,6 +68,9 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
   const updateStringRecord = useSessionStore(
     (state) => state.updateStringRecord,
   );
+  const batchUpdateStringRecords = useSessionStore(
+    (state) => state.batchUpdateStringRecords,
+  );
 
   // ✅ 使用selector订阅selectedRows的size，避免无限循环
   const selectedCount = useSessionStore(
@@ -99,6 +103,9 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
   // 取消令牌（使用 useRef 避免重新创建）
   const cancellationTokenRef = useRef<CancellationToken | null>(null);
 
+  // Replace 对话框状态
+  const [replaceDialogOpen, setReplaceDialogOpen] = useState(false);
+
   // 是否正在加载翻译
   const isLoadingTranslations = progress !== undefined && progress < 100;
 
@@ -120,6 +127,19 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
   useEffect(() => {
     setPaginationModel((prev) => ({ ...prev, page: 0 }));
   }, [currentFilter, sessionData.session_id]);
+
+  // Ctrl+H 快捷键监听（打开查找替换对话框）
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "h") {
+        e.preventDefault();
+        setReplaceDialogOpen(true);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   useEffect(() => {
     setPaginationModel((prev) => {
@@ -331,6 +351,22 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
     if (cancellationTokenRef.current) {
       setAiStatus({ type: "info", message: "正在尝试取消翻译..." });
       cancellationTokenRef.current.cancel();
+    }
+  };
+
+  // 处理替换
+  const handleReplace = (
+    updates: Array<{
+      formId: string;
+      recordType: string;
+      subrecordType: string;
+      index: number;
+      translatedText: string;
+    }>,
+  ) => {
+    if (batchUpdateStringRecords) {
+      batchUpdateStringRecords(sessionData.session_id, updates);
+      showSuccess(`成功替换 ${updates.length} 条记录，已标记为AI翻译`);
     }
   };
 
@@ -550,6 +586,15 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* 查找替换对话框 */}
+      <ReplaceDialog
+        open={replaceDialogOpen}
+        onClose={() => setReplaceDialogOpen(false)}
+        sessionId={sessionData.session_id}
+        records={filteredStrings}
+        onReplace={handleReplace}
+      />
     </Box>
   );
 }

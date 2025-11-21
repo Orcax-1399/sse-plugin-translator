@@ -235,6 +235,17 @@ export interface SessionState {
   clearSelectedRows?: (sessionId: string) => void;
   /** 获取选中的行（rowId格式："form_id|record_type|subrecord_type|index"） */
   getSelectedRows?: (sessionId: string) => Set<string>;
+  /** 批量更新字符串记录（用于查找替换功能） */
+  batchUpdateStringRecords?: (
+    sessionId: string,
+    updates: Array<{
+      formId: string;
+      recordType: string;
+      subrecordType: string;
+      index: number;
+      translatedText: string;
+    }>,
+  ) => void;
 }
 
 /**

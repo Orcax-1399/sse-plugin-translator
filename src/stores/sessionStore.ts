@@ -736,4 +736,71 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const { selectedRows } = get();
     return selectedRows?.get(sessionId) || new Set<string>();
   },
+
+  /**
+   * 批量更新字符串记录（用于查找替换功能）
+   *
+   * @param sessionId - Session ID
+   * @param updates - 更新列表
+   */
+  batchUpdateStringRecords: (
+    sessionId: string,
+    updates: Array<{
+      formId: string;
+      recordType: string;
+      subrecordType: string;
+      index: number;
+      translatedText: string;
+    }>,
+  ) => {
+    const { openedSessions } = get();
+    const session = openedSessions.get(sessionId);
+
+    if (!session) {
+      console.warn(`Session 不存在: ${sessionId}`);
+      return;
+    }
+
+    // ✅ 使用 Immer 原地更新，避免创建新数组
+    const updatedSession = produce(session, (draft) => {
+      for (const update of updates) {
+        const record = draft.strings.find(
+          (s) =>
+            s.form_id === update.formId &&
+            s.record_type === update.recordType &&
+            s.subrecord_type === update.subrecordType &&
+            s.index === update.index,
+        );
+
+        if (record) {
+          record.translated_text = update.translatedText;
+          record.translation_status = "ai"; // 标记为AI翻译
+        }
+      }
+    });
+
+    // 更新 Session 数据
+    set((state) => {
+      const newSessions = new Map(state.openedSessions);
+      newSessions.set(sessionId, updatedSession);
+
+      // ✅ 批量标记为待保存
+      const newPendingChanges = new Map(state.pendingChanges);
+      const changes = newPendingChanges.get(sessionId) || new Set<string>();
+
+      for (const update of updates) {
+        const recordId = `${update.formId}|${update.recordType}|${update.subrecordType}|${update.index}`;
+        changes.add(recordId);
+      }
+
+      newPendingChanges.set(sessionId, changes);
+
+      return {
+        openedSessions: newSessions,
+        pendingChanges: newPendingChanges,
+      };
+    });
+
+    console.log(`✓ 批量更新完成: ${updates.length} 条记录 (${sessionId})`);
+  },
 }));
