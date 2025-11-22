@@ -6,6 +6,25 @@
 export interface SessionState {
   csv: Array<{ index: number; text: string }>;
   searchCache: Record<string, SearchResult>;
+  /** 当前批次总条目数，用于展示整体进度 */
+  totalCount: number;
+  /** 已完成条目数量（会随着 apply 更新） */
+  completedCount: number;
+  /** search 使用统计与最近一次调用信息 */
+  searchMeta: {
+    lastTerms: string[];
+    executedTerms: string[];
+    cacheHits: string[];
+    deferredTerms: string[];
+    budgetUsed: number;
+    budgetTotal: number;
+  };
+  /** 最近一次 apply 的摘要（帮助 AI 判断调用是否成功） */
+  recentApply?: {
+    indices: number[];
+    preview: Array<{ index: number; translated: string }>;
+    timestamp: number;
+  };
   lastError?: {
     tool: string;
     args: any;
@@ -34,7 +53,8 @@ export function buildSystemPrompt(): string {
 
 1. **你只能输出工具调用，禁止直接输出翻译文本或任何解释性文字**
 2. 你有两个工具：search（查询术语）和 apply_translations（提交翻译）
-3. 当遇到了**人名**, **地名**, **术语**的时候，**一定要先调用search**
+3. 当遇到了**人名**, **地名**, **术语**的时候，应先检查 SEARCH 缓存，如果没有合适候选再调用 search
+4. search 有调用预算，User Prompt 会提供 “budgetUsed/budgetTotal”，请优先复用缓存，只有在确实需要时才查询
 
 ## 工具使用规范
 
@@ -78,17 +98,27 @@ export function buildSystemPrompt(): string {
 
 ## 工作流程
 
-1. 查看CSV待翻译列表，识别需要search的术语
-2. 批量调用search查询术语（如果SEARCH缓存中没有）
-3. 根据search结果和术语标注，翻译所有CSV行
-4. 批量调用apply_translations提交翻译（尽可能一次提交多条）
-5. 如果存在长文本，则优先查询/翻译长文本，并且提交条目减少
-6. 如果CSV还有剩余，重复上述流程
+1. **识别术语**：查看CSV待翻译列表，识别需要search的专有名词/术语
+2. **批量查询**：批量调用search查询缺失的术语（优先检查SEARCH缓存，避免重复查询）
+3. **优先翻译**：优先翻译已有search结果或术语标注的条目（充分利用查询预算）
+4. **批量提交**：批量调用apply_translations提交翻译（**必须充分利用search结果，一次提交所有已准备好的翻译**）
+5. **继续迭代**：如果CSV还有剩余且有预算，重复上述流程；若预算耗尽，翻译剩余的简单条目
+
+**重要原则**：
+- search预算在apply后会重置，因此**不要浪费查询结果**，查询后应尽可能翻译所有相关条目
+- 避免"查询少量术语→只翻译1-2条→重置预算"的低效模式
+- 每次apply应包含所有已准备好的翻译（有search结果、术语标注或无需查询的简单文本）
 
 ## 错误处理
 
 如果工具调用失败（如apply_translations的index不存在），系统会在下一轮提供错误信息。
 你需要根据错误信息调整参数，重新调用工具。
+
+## 进度与预算
+
+- CSV 列表中剩余的行就是需要翻译的条目，长度为 0 表示已经完成；\`已完成/总计\` 字段也会同步显示
+- search budget 形如 \`2/6\`，表示本轮已经使用 2 次预算，最多允许 6 次；用尽预算后若仍需要术语，请改用已有信息完成翻译
+- recent apply 区块会展示最近一次提交的 index（最多5条）与译文片段，可据此确认提交是否成功
 
 记住：你的唯一输出应该是工具调用（tool_calls），不要输出任何文本解释。`;
 }
@@ -125,7 +155,43 @@ export function buildUserPrompt(state: SessionState): string {
     prompt += "\n```\n\n";
   }
 
-  // 3. 错误信息（如果有）
+  // 3. Progress / Search Meta
+  prompt += `## 进度\n\n`;
+  prompt += `- 已完成: ${state.completedCount}/${state.totalCount}\n`;
+  prompt += `- search预算: ${state.searchMeta.budgetUsed}/${state.searchMeta.budgetTotal}\n`;
+  if (state.searchMeta.lastTerms.length > 0) {
+    const lastTerms = state.searchMeta.lastTerms.slice(0, 10).join(", ");
+    const executed = state.searchMeta.executedTerms.slice(0, 10).join(", ");
+    const cacheHits = state.searchMeta.cacheHits.slice(0, 10).join(", ");
+    const deferred =
+      state.searchMeta.deferredTerms.length > 0
+        ? state.searchMeta.deferredTerms.slice(0, 10).join(", ")
+        : "无";
+    prompt += `- 上次search请求: [${lastTerms}]\n`;
+    prompt += `  * 实际查询: [${executed || "无"}]\n`;
+    prompt += `  * 缓存命中: [${cacheHits || "无"}]\n`;
+    prompt += `  * 因预算延迟: [${deferred}]\n`;
+  } else {
+    prompt += `- 尚未调用search\n`;
+  }
+  if (state.recentApply) {
+    const count = state.recentApply.indices.length;
+    const indices = state.recentApply.indices.slice(-5).join(", ");
+    const preview = state.recentApply.preview
+      .slice(-3)
+      .map((p) => `${p.index}:"${p.translated.slice(0, 20)}"`)
+      .join("; ");
+    prompt += `- 上次apply: 成功提交 ${count} 条\n`;
+    prompt += `  * index: [${indices}${count > 5 ? "..." : ""}]\n`;
+    if (preview) {
+      prompt += `  * 译文片段: ${preview}\n`;
+    }
+  } else {
+    prompt += `- 尚未提交 apply_translations\n`;
+  }
+  prompt += `\n`;
+
+  // 4. 错误信息（如果有）
   if (state.lastError) {
     prompt += `## ⚠️ 上次工具调用错误\n\n`;
     prompt += `工具: ${state.lastError.tool}\n`;

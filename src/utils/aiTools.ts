@@ -3,8 +3,20 @@
  * 实现search和apply_translations工具的具体逻辑
  */
 
-import { invoke } from '@tauri-apps/api/core';
-import type { SessionState, SearchResult } from './aiPrompts';
+import { invoke } from "@tauri-apps/api/core";
+import type { SessionState, SearchResult } from "./aiPrompts";
+
+/**
+ * Search执行结果（包含缓存命中和实际查询的统计）
+ */
+export interface SearchExecutionResult {
+  /** 查询结果（包含缓存命中和新查询） */
+  results: Record<string, SearchResult>;
+  /** 实际执行查询的术语列表 */
+  queriedTerms: string[];
+  /** 缓存命中的术语列表 */
+  cacheHits: string[];
+}
 
 /**
  * 原子翻译类型（来自atomic_translations表）
@@ -26,8 +38,8 @@ interface ReferenceTranslation {
   record_type: string;
   subrecord_type: string;
   editor_id: string | null;
-  original_text: string;      // ← 英文原文
-  translated_text: string;    // ← 中文译文
+  original_text: string; // ← 英文原文
+  translated_text: string; // ← 中文译文
   plugin_name: string | null;
   created_at: number;
   updated_at: number;
@@ -38,51 +50,51 @@ interface ReferenceTranslation {
  */
 export const toolDefinitions = {
   search: {
-    type: 'function' as const,
+    type: "function" as const,
     function: {
-      name: 'search',
-      description: '查询术语的翻译候选。用于查找专有名词、术语的标准译名。',
+      name: "search",
+      description: "查询术语的翻译候选。用于查找专有名词、术语的标准译名。",
       parameters: {
-        type: 'object',
+        type: "object",
         properties: {
           terms: {
-            type: 'array',
-            items: { type: 'string' },
-            description: '需要查询的术语列表（英文）',
+            type: "array",
+            items: { type: "string" },
+            description: "需要查询的术语列表（英文）",
           },
         },
-        required: ['terms'],
+        required: ["terms"],
       },
     },
   },
   applyTranslations: {
-    type: 'function' as const,
+    type: "function" as const,
     function: {
-      name: 'apply_translations',
-      description: '提交翻译结果。将已翻译的文本提交到系统。',
+      name: "apply_translations",
+      description: "提交翻译结果。将已翻译的文本提交到系统。",
       parameters: {
-        type: 'object',
+        type: "object",
         properties: {
           translations: {
-            type: 'array',
+            type: "array",
             items: {
-              type: 'object',
+              type: "object",
               properties: {
                 index: {
-                  type: 'number',
-                  description: 'CSV行的index',
+                  type: "number",
+                  description: "CSV行的index",
                 },
                 translated: {
-                  type: 'string',
-                  description: '翻译后的中文文本',
+                  type: "string",
+                  description: "翻译后的中文文本",
                 },
               },
-              required: ['index', 'translated'],
+              required: ["index", "translated"],
             },
-            description: '翻译结果列表',
+            description: "翻译结果列表",
           },
         },
-        required: ['translations'],
+        required: ["translations"],
       },
     },
   },
@@ -94,21 +106,25 @@ export const toolDefinitions = {
  */
 export async function executeSearch(
   terms: string[],
-): Promise<Record<string, SearchResult>> {
+  options?: { cache?: Record<string, SearchResult> },
+): Promise<SearchExecutionResult> {
   const results: Record<string, SearchResult> = {};
+  const cache = options?.cache || {};
+  const queriedTerms: string[] = [];
+  const cacheHits: string[] = [];
 
   // ⚠️ 保证：即使查询失败，每个term也要有结果
   // 先初始化所有terms为not_found，后续找到了再覆盖
-  terms.forEach(term => {
+  terms.forEach((term) => {
     results[term] = {
-      status: 'not_found',
+      status: "not_found",
       candidates: [],
     };
   });
 
   try {
     // 1. 查询原子库（atomic_translations）
-    const atoms = await invoke<AtomTranslation[]>('get_all_atoms');
+    const atoms = await invoke<AtomTranslation[]>("get_all_atoms");
     const atomMap = new Map<string, string>();
     atoms.forEach((atom) => {
       // 原子库存储小写，匹配时不区分大小写
@@ -118,9 +134,20 @@ export async function executeSearch(
     // 2. 对每个术语进行查询
     for (const term of terms) {
       const lowerTerm = term.toLowerCase();
+
+      // 2.1 检查缓存
+      if (cache[term] && cache[term].status === "ok") {
+        results[term] = cache[term];
+        cacheHits.push(term);
+        continue; // 跳过实际查询
+      }
+
+      // 2.2 记录为实际查询
+      queriedTerms.push(term);
+
       const candidates: Array<{ en: string; zh: string; length: number }> = [];
 
-      // 2.1 查询原子库
+      // 2.3 查询原子库
       if (atomMap.has(lowerTerm)) {
         candidates.push({
           en: term,
@@ -129,10 +156,10 @@ export async function executeSearch(
         });
       }
 
-      // 2.2 查询参考翻译（translations表）
+      // 2.4 查询参考翻译（translations表）
       try {
         const refs = await invoke<ReferenceTranslation[]>(
-          'query_word_translations',
+          "query_word_translations",
           {
             text: term,
             limit: 5, // 最多返回5个参考
@@ -167,7 +194,7 @@ export async function executeSearch(
       if (candidates.length === 0) {
         // 没有找到任何候选
         results[term] = {
-          status: 'not_found',
+          status: "not_found",
           candidates: [],
         };
       } else {
@@ -176,51 +203,63 @@ export async function executeSearch(
         const top3 = candidates.slice(0, 3);
 
         results[term] = {
-          status: 'ok',
+          status: "ok",
           candidates: top3.map((c) => ({ en: c.en, zh: c.zh })),
         };
       }
     }
   } catch (error) {
-    console.error('executeSearch失败:', error);
+    console.error("executeSearch失败:", error);
     // ⚠️ 不抛出异常，返回已初始化的results（所有terms都是not_found）
-    console.warn('⚠️ 查询过程出错，所有术语标记为not_found');
+    console.warn("⚠️ 查询过程出错，所有术语标记为not_found");
   }
 
   // 🔍 日志：显示查询结果摘要
-  const foundCount = Object.values(results).filter(r => r.status === 'ok').length;
-  const notFoundCount = Object.values(results).filter(r => r.status === 'not_found').length;
-  console.log(`[executeSearch] 查询完成: ${foundCount}个找到, ${notFoundCount}个未找到`);
+  const foundCount = Object.values(results).filter(
+    (r) => r.status === "ok",
+  ).length;
+  const notFoundCount = Object.values(results).filter(
+    (r) => r.status === "not_found",
+  ).length;
+  console.log(
+    `[executeSearch] 查询完成: 实际查询${queriedTerms.length}个, 缓存命中${cacheHits.length}个, ${foundCount}个找到, ${notFoundCount}个未找到`,
+  );
 
   // 🔍 详细日志：列出未找到的术语
   const notFoundTerms = Object.entries(results)
-    .filter(([_, result]) => result.status === 'not_found')
+    .filter(([_, result]) => result.status === "not_found")
     .map(([term, _]) => term);
   if (notFoundTerms.length > 0) {
-    console.log('[executeSearch] 未找到的术语:', notFoundTerms.join(', '));
+    console.log("[executeSearch] 未找到的术语:", notFoundTerms.join(", "));
   }
 
   // 📝 保存搜索历史到数据库（供AI学习使用）
   try {
     const historyEntries = Object.entries(results)
-      .filter(([_, result]) => result.status === 'ok' && result.candidates.length > 0)
+      .filter(
+        ([_, result]) => result.status === "ok" && result.candidates.length > 0,
+      )
       .map(([term, result]) => ({
         term,
         // 只保存 top3/5 候选的译文
-        candidates: result.candidates.slice(0, 5).map(c => c.zh),
+        candidates: result.candidates.slice(0, 5).map((c) => c.zh),
         updatedAt: Date.now(),
       }));
 
     if (historyEntries.length > 0) {
-      await invoke('save_search_history', { entries: historyEntries });
+      await invoke("save_search_history", { entries: historyEntries });
       console.log(`[executeSearch] 已保存 ${historyEntries.length} 条搜索历史`);
     }
   } catch (error) {
     // 保存失败不影响主流程
-    console.warn('[executeSearch] 保存搜索历史失败:', error);
+    console.warn("[executeSearch] 保存搜索历史失败:", error);
   }
 
-  return results;
+  return {
+    results,
+    queriedTerms,
+    cacheHits,
+  };
 }
 
 /**
@@ -231,7 +270,12 @@ export function executeApply(
   translations: Array<{ index: number; translated: string }>,
   sessionState: SessionState,
   onApply: (index: number, translated: string) => void,
-): { success: boolean; error?: string; invalidIndexes?: number[] } {
+): {
+  success: boolean;
+  error?: string;
+  invalidIndexes?: number[];
+  appliedIndices?: number[];
+} {
   const invalidIndexes: number[] = [];
 
   // 验证所有index是否存在
@@ -246,7 +290,7 @@ export function executeApply(
   if (invalidIndexes.length > 0) {
     return {
       success: false,
-      error: `以下index在CSV中不存在: ${invalidIndexes.join(', ')}`,
+      error: `以下index在CSV中不存在: ${invalidIndexes.join(", ")}`,
       invalidIndexes,
     };
   }
@@ -263,9 +307,12 @@ export function executeApply(
       onApply(trans.index, trans.translated);
     });
 
-    return { success: true };
+    // 3. 收集成功应用的索引
+    const appliedIndices = translations.map((t) => t.index);
+
+    return { success: true, appliedIndices };
   } catch (error) {
-    console.error('executeApply失败:', error);
+    console.error("executeApply失败:", error);
     return {
       success: false,
       error: `应用翻译失败: ${String(error)}`,
@@ -280,12 +327,12 @@ export function executeApply(
  */
 export async function preprocessTerms(text: string): Promise<string> {
   try {
-    const annotated = await invoke<string>('replace_text_with_atoms', {
+    const annotated = await invoke<string>("replace_text_with_atoms", {
       text,
     });
     return annotated;
   } catch (error) {
-    console.warn('术语预处理失败:', error);
+    console.warn("术语预处理失败:", error);
     // 失败时返回原文
     return text;
   }
