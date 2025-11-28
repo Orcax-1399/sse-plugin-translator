@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { DataGrid, GridColDef } from '@mui/x-data-grid';
 import { invoke } from '@tauri-apps/api/core';
-import { Box, Typography, Chip, Alert } from '@mui/material';
+import { Box, Typography, Chip, Alert, Snackbar } from '@mui/material';
 
 interface SearchHistoryEntry {
   term: string;
@@ -13,23 +13,54 @@ export default function SearchHistoryPanel() {
   const [history, setHistory] = useState<SearchHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [toastOpen, setToastOpen] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+  const [toastSeverity, setToastSeverity] = useState<'success' | 'error'>('success');
+
+  const loadHistory = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await invoke<SearchHistoryEntry[]>('get_search_history');
+      setHistory(data);
+    } catch (err) {
+      console.error('加载搜索历史失败:', err);
+      setError('加载搜索历史失败: ' + String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const loadHistory = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        const data = await invoke<SearchHistoryEntry[]>('get_search_history');
-        setHistory(data);
-      } catch (err) {
-        console.error('加载搜索历史失败:', err);
-        setError('加载搜索历史失败: ' + String(err));
-      } finally {
-        setLoading(false);
-      }
-    };
     loadHistory();
   }, []);
+
+  const handleChipClick = async (term: string, candidate: string) => {
+    try {
+      // 1. 添加到原子数据库
+      await invoke('add_atom_translation', {
+        original: term,
+        translated: candidate,
+        source: 'manual'
+      });
+
+      // 2. 删除搜索历史记录
+      await invoke('delete_search_history_entry', { term });
+
+      // 3. 刷新表格
+      await loadHistory();
+
+      // 4. 显示成功Toast
+      setToastMessage(`已添加: ${term} → ${candidate}`);
+      setToastSeverity('success');
+      setToastOpen(true);
+    } catch (error) {
+      console.error('操作失败:', error);
+      setToastMessage(`操作失败: ${String(error)}`);
+      setToastSeverity('error');
+      setToastOpen(true);
+    }
+  };
 
   const columns: GridColDef[] = [
     {
@@ -43,18 +74,32 @@ export default function SearchHistoryPanel() {
       headerName: '候选译文',
       flex: 2,
       minWidth: 300,
-      renderCell: (params) => (
-        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', py: 0.5 }}>
-          {(params.value as string[]).slice(0, 5).map((candidate: string, idx: number) => (
-            <Chip
-              key={idx}
-              label={candidate}
-              size="small"
-              variant="outlined"
-            />
-          ))}
-        </Box>
-      ),
+      renderCell: (params) => {
+        const term = params.row.term as string;
+        const candidates = params.value as string[];
+
+        return (
+          <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', py: 0.5 }}>
+            {candidates.slice(0, 5).map((candidate: string, idx: number) => (
+              <Chip
+                key={idx}
+                label={candidate}
+                size="small"
+                variant="outlined"
+                onClick={() => handleChipClick(term, candidate)}
+                sx={{
+                  cursor: 'pointer',
+                  '&:hover': {
+                    bgcolor: 'primary.light',
+                    borderColor: 'primary.main',
+                    color: 'primary.contrastText',
+                  },
+                }}
+              />
+            ))}
+          </Box>
+        );
+      },
     },
     {
       field: 'updated_at',
@@ -111,6 +156,21 @@ export default function SearchHistoryPanel() {
       <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
         共 {history.length} 条搜索记录
       </Typography>
+
+      <Snackbar
+        open={toastOpen}
+        autoHideDuration={3000}
+        onClose={() => setToastOpen(false)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+      >
+        <Alert
+          onClose={() => setToastOpen(false)}
+          severity={toastSeverity}
+          sx={{ width: '100%' }}
+        >
+          {toastMessage}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }

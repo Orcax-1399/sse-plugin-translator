@@ -115,7 +115,8 @@ pub fn run() {
             commands::get_current_api,
             // 搜索历史
             commands::save_search_history,
-            commands::get_search_history
+            commands::get_search_history,
+            commands::delete_search_history_entry
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

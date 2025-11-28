@@ -100,4 +100,14 @@ impl SearchHistoryDB {
 
         Ok(entries)
     }
+
+    /// 删除单条搜索历史记录
+    pub fn delete_entry(&self, term: &str) -> SqliteResult<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM search_history WHERE term = ?1",
+            params![term],
+        )?;
+        Ok(())
+    }
 }

@@ -25,3 +25,16 @@ pub fn get_search_history(
     db.get_all()
         .map_err(|e| format!("获取搜索历史失败: {}", e))
 }
+
+/// 删除单条搜索历史记录
+#[tauri::command]
+pub fn delete_search_history_entry(
+    search_history_db: tauri::State<Mutex<SearchHistoryDB>>,
+    term: String,
+) -> Result<(), String> {
+    let db = search_history_db
+        .lock()
+        .map_err(|e| format!("数据库锁定失败: {}", e))?;
+    db.delete_entry(&term)
+        .map_err(|e| format!("删除搜索历史失败: {}", e))
+}
