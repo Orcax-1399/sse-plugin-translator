@@ -14,12 +14,11 @@ mod utils;
 
 use api_manage::ApiConfigDB;
 use atomic_db::AtomicDB;
-use commands::coverage::CoverageExtractionProgress;
 use coverage_db::CoverageDB;
 use plugin_session::{PluginSessionManager, StringRecord};
 use search_history::SearchHistoryDB;
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 use translation_db::TranslationDB;
 use utils::paths::{
@@ -48,10 +47,11 @@ pub fn run() {
         SearchHistoryDB::new(search_history_db_path.to_str().expect("路径转换失败"))
             .expect("无法初始化搜索历史数据库");
 
-    // 初始化覆盖关系数据库
+    // 初始化覆盖关系数据库 (使用 Arc 以便在后台任务中共享)
     let coverage_db_path = get_coverage_db_path();
-    let coverage_db = CoverageDB::new(coverage_db_path).expect("无法初始化覆盖关系数据库");
-    let coverage_progress = CoverageExtractionProgress::default();
+    let coverage_db = Arc::new(Mutex::new(
+        CoverageDB::new(coverage_db_path).expect("无法初始化覆盖关系数据库"),
+    ));
 
     // 初始化插件 Session 管理器
     let session_manager = PluginSessionManager::new();
@@ -66,8 +66,7 @@ pub fn run() {
         .manage(Mutex::new(atomic_db))
         .manage(Mutex::new(api_db))
         .manage(Mutex::new(search_history_db))
-        .manage(Mutex::new(coverage_db))
-        .manage(Mutex::new(coverage_progress))
+        .manage(coverage_db)
         .manage(Mutex::new(session_manager))
         .manage(editor_data_store)
         .setup(|app| {
@@ -133,8 +132,7 @@ pub fn run() {
             commands::open_coverage_window,
             commands::get_coverage_status,
             commands::run_coverage_extraction,
-            commands::search_coverage_entries,
-            commands::get_coverage_extraction_progress
+            commands::search_coverage_entries
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

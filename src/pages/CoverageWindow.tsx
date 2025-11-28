@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Container,
   Stack,
@@ -11,19 +11,60 @@ import {
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { listen } from "@tauri-apps/api/event";
 import CoverageStatusPanel from "../components/coverage/CoverageStatusPanel";
 import CoverageSearchPanel from "../components/coverage/CoverageSearchPanel";
+import { useCoverageStore } from "../stores/coverageStore";
+import type {
+  CoverageProgressPayload,
+  CoverageCompletePayload,
+} from "../types";
 
 /**
  * 覆盖数据库管理窗口
  */
 export default function CoverageWindow() {
   const [tabIndex, setTabIndex] = useState(0);
+  const { setExtractionProgress, setExtractionComplete } = useCoverageStore();
 
   // 关闭窗口
   const handleClose = () => {
     getCurrentWebviewWindow().close();
   };
+
+  // 统一监听覆盖事件，窗口存在期间保持订阅
+  useEffect(() => {
+    let unlistenProgress: (() => void) | undefined;
+    let unlistenComplete: (() => void) | undefined;
+
+    (async () => {
+      console.log("[DEBUG] Setting up coverage event listeners...");
+
+      unlistenProgress = await listen<CoverageProgressPayload>(
+        "coverage_progress",
+        (event) => {
+          console.log("[DEBUG] Received coverage_progress:", event.payload);
+          setExtractionProgress(event.payload);
+        }
+      );
+
+      unlistenComplete = await listen<CoverageCompletePayload>(
+        "coverage_complete",
+        (event) => {
+          console.log("[DEBUG] Received coverage_complete:", event.payload);
+          const { success, stats, error } = event.payload;
+          setExtractionComplete(success, stats ?? null, error ?? null);
+        }
+      );
+
+      console.log("[DEBUG] Coverage event listeners ready");
+    })();
+
+    return () => {
+      unlistenProgress?.();
+      unlistenComplete?.();
+    };
+  }, [setExtractionProgress, setExtractionComplete]);
 
   return (
     <Container maxWidth="xl" sx={{ height: "100vh", py: 3 }}>

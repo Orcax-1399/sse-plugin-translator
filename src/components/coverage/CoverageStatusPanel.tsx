@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useMemo } from "react";
+import { useEffect, useCallback, useMemo } from "react";
 import {
   Box,
   Button,
@@ -32,36 +32,13 @@ export default function CoverageStatusPanel() {
     error,
     fetchStatus,
     startExtraction,
-    pollProgress,
     clearError,
   } = useCoverageStore();
-
-  const pollIntervalRef = useRef<number | null>(null);
 
   // 初始加载状态
   useEffect(() => {
     fetchStatus();
   }, [fetchStatus]);
-
-  // 提取过程中轮询进度
-  useEffect(() => {
-    if (isExtracting) {
-      pollIntervalRef.current = window.setInterval(() => {
-        pollProgress();
-      }, 500);
-    } else {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
-      }
-    }
-
-    return () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-      }
-    };
-  }, [isExtracting, pollProgress]);
 
   // 格式化时间戳
   const formatTimestamp = useCallback((timestamp: number | null) => {
@@ -159,7 +136,8 @@ export default function CoverageStatusPanel() {
 
       {status && !loadOrderAvailable && (
         <Alert severity="info" sx={{ mb: 2 }}>
-          未检测到 loadorder.txt，可能未通过 Mod 管理器启动。请先生成 load order 后再进行覆盖提取。
+          未检测到 loadorder.txt，可能未通过 Mod 管理器启动。请先生成 load order
+          后再进行覆盖提取。
         </Alert>
       )}
 
@@ -204,20 +182,13 @@ export default function CoverageStatusPanel() {
           <Box sx={{ display: "flex", gap: 2 }}>
             {/* 新增插件 */}
             <Paper variant="outlined" sx={{ flex: 1, p: 2 }}>
-              <Typography
-                variant="subtitle2"
-                color="success.main"
-                sx={{ mb: 1 }}
-              >
+              <Typography variant="subtitle2" color="success.main" sx={{ mb: 1 }}>
                 新增插件 ({status.extra_plugins.length})
               </Typography>
               {status.extra_plugins.length > 0 ? (
                 <List dense disablePadding>
                   {status.extra_plugins.map((plugin) => (
-                    <ListItem
-                      key={`extra-${plugin.plugin_name}`}
-                      disablePadding
-                    >
+                    <ListItem key={`extra-${plugin.plugin_name}`} disablePadding>
                       <ListItemText
                         primary={plugin.plugin_name}
                         primaryTypographyProps={{ variant: "body2" }}

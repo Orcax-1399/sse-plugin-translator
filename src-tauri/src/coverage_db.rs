@@ -232,12 +232,20 @@ impl CoverageDB {
             )));
         }
 
+        let mut relevance_patterns: Option<(String, String, String)> = None;
+
         if let Some(text_query) = text_query.filter(|s| !s.trim().is_empty()) {
             conditions.push("LOWER(text) LIKE ?");
             values.push(Value::Text(format!(
                 "%{}%",
                 text_query.to_lowercase()
             )));
+            let lowered = text_query.to_lowercase();
+            relevance_patterns = Some((
+                lowered.clone(),
+                format!("{}%", lowered),
+                format!("%{}%", lowered),
+            ));
         }
 
         let mut sql = "SELECT form_id, record_type, subrecord_type, \"index\", text, source_mod, load_order_pos, extracted_at FROM coverage_entries".to_string();
@@ -245,7 +253,15 @@ impl CoverageDB {
             sql.push_str(" WHERE ");
             sql.push_str(&conditions.join(" AND "));
         }
-        sql.push_str(" ORDER BY extracted_at DESC LIMIT ?");
+
+        if let Some((exact, prefix, substring)) = relevance_patterns {
+            sql.push_str(" ORDER BY CASE WHEN LOWER(text) = ? THEN 4 WHEN LOWER(text) LIKE ? THEN 3 WHEN LOWER(text) LIKE ? THEN 2 ELSE 1 END DESC, load_order_pos DESC, extracted_at DESC LIMIT ?");
+            values.push(Value::Text(exact));
+            values.push(Value::Text(prefix));
+            values.push(Value::Text(substring));
+        } else {
+            sql.push_str(" ORDER BY extracted_at DESC LIMIT ?");
+        }
         values.push(Value::Integer(limit as i64));
 
         let params = params_from_iter(values.into_iter());

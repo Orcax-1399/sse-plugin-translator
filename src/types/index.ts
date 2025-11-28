@@ -359,16 +359,30 @@ export interface CoverageExtractionStats {
   errors: string[];
 }
 
+// ============================================
+// Coverage 事件 Payload 类型
+// ============================================
+
 /**
- * 覆盖提取进度
+ * 覆盖提取进度事件 payload
  */
-export interface CoverageExtractionProgress {
+export interface CoverageProgressPayload {
   /** 当前处理的MOD名称 */
-  current_mod: string | null;
+  current_mod: string;
   /** 当前进度 */
   current_progress: number;
   /** 总数 */
   total: number;
-  /** 是否已经完成 */
-  completed: boolean;
+}
+
+/**
+ * 覆盖提取完成事件 payload
+ */
+export interface CoverageCompletePayload {
+  /** 是否成功 */
+  success: boolean;
+  /** 提取统计 (成功时有值) */
+  stats: CoverageExtractionStats | null;
+  /** 错误信息 (失败时有值) */
+  error: string | null;
 }

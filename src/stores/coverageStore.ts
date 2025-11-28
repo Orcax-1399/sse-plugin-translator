@@ -4,17 +4,21 @@ import type {
   CoverageStatus,
   CoverageEntry,
   CoverageExtractionStats,
-  CoverageExtractionProgress,
+  CoverageProgressPayload,
 } from "../types";
 
 /**
  * Coverage DB 状态管理
+ *
+ * 提取进度通过事件驱动更新，不再使用轮询
  */
 interface CoverageState {
   // 状态数据
   status: CoverageStatus | null;
   searchResults: CoverageEntry[];
-  extractionProgress: CoverageExtractionProgress | null;
+
+  // 提取相关状态 (由事件更新)
+  extractionProgress: CoverageProgressPayload | null;
   lastExtractionStats: CoverageExtractionStats | null;
 
   // 加载状态
@@ -27,13 +31,21 @@ interface CoverageState {
 
   // Actions
   fetchStatus: () => Promise<void>;
-  startExtraction: () => Promise<CoverageExtractionStats | null>;
+  startExtraction: () => Promise<void>;
   searchEntries: (
     formIdQuery?: string,
     textQuery?: string,
     limit?: number
   ) => Promise<void>;
-  pollProgress: () => Promise<CoverageExtractionProgress | null>;
+
+  // 事件驱动的状态更新 (由组件调用)
+  setExtractionProgress: (progress: CoverageProgressPayload) => void;
+  setExtractionComplete: (
+    _success: boolean,
+    stats: CoverageExtractionStats | null,
+    error: string | null
+  ) => void;
+
   clearError: () => void;
   clearSearchResults: () => void;
 }
@@ -69,38 +81,37 @@ export const useCoverageStore = create<CoverageState>((set, get) => ({
     }
   },
 
-  // 开始提取
+  // 启动提取 (命令立即返回，进度通过事件更新)
   startExtraction: async () => {
     try {
-      set({ isExtracting: true, error: null, extractionProgress: null });
-
-      const stats = await invoke<CoverageExtractionStats>(
-        "run_coverage_extraction"
-      );
-
       set({
-        lastExtractionStats: stats,
-        isExtracting: false,
+        isExtracting: true,
+        error: null,
         extractionProgress: null,
+        lastExtractionStats: null,
       });
 
-      // 提取完成后刷新状态
-      await get().fetchStatus();
+      // 命令立即返回，不等待提取完成
+      await invoke("run_coverage_extraction");
 
-      return stats;
+      // 注意：isExtracting 将在收到 coverage_complete 事件后由 setExtractionComplete 设为 false
     } catch (error) {
-      console.error("覆盖提取失败:", error);
+      // 这里只会捕获预检查阶段的错误（如没有游戏路径）
+      console.error("启动覆盖提取失败:", error);
       set({
         error: error instanceof Error ? error.message : String(error),
         isExtracting: false,
         extractionProgress: null,
       });
-      return null;
     }
   },
 
   // 搜索覆盖记录
-  searchEntries: async (formIdQuery?: string, textQuery?: string, limit = 100) => {
+  searchEntries: async (
+    formIdQuery?: string,
+    textQuery?: string,
+    limit = 100
+  ) => {
     try {
       set({ isSearching: true, error: null });
 
@@ -124,20 +135,26 @@ export const useCoverageStore = create<CoverageState>((set, get) => ({
     }
   },
 
-  // 轮询进度
-  pollProgress: async () => {
-    try {
-      const progress = await invoke<CoverageExtractionProgress>(
-        "get_coverage_extraction_progress"
-      );
+  // 事件驱动：更新提取进度
+  setExtractionProgress: (progress: CoverageProgressPayload) => {
+    set({ extractionProgress: progress });
+  },
 
-      set({ extractionProgress: progress });
+  // 事件驱动：提取完成
+  setExtractionComplete: (
+    _success: boolean,
+    stats: CoverageExtractionStats | null,
+    error: string | null
+  ) => {
+    set({
+      isExtracting: false,
+      extractionProgress: null,
+      lastExtractionStats: stats,
+      error: error,
+    });
 
-      return progress;
-    } catch (error) {
-      console.error("获取进度失败:", error);
-      return null;
-    }
+    // 提取完成后自动刷新状态 (无论成功失败，以便显示可能的部分写入数据)
+    get().fetchStatus();
   },
 
   // 清除错误

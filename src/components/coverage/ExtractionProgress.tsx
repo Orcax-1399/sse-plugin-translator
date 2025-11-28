@@ -1,8 +1,8 @@
 import { Box, LinearProgress, Typography } from "@mui/material";
-import type { CoverageExtractionProgress } from "../../types";
+import type { CoverageProgressPayload } from "../../types";
 
 interface ExtractionProgressProps {
-  progress: CoverageExtractionProgress;
+  progress: CoverageProgressPayload;
 }
 
 /**
@@ -16,14 +16,13 @@ export default function ExtractionProgress({
     safeTotal > 0
       ? Math.min(
           100,
-          Math.round((progress.current_progress / safeTotal) * 100),
+          Math.round((progress.current_progress / safeTotal) * 100)
         )
       : 0;
+
   const label = progress.current_mod
     ? `${progress.current_mod} (${Math.min(progress.current_progress, safeTotal)}/${safeTotal || "?"})`
-    : progress.completed
-      ? "提取完成"
-      : "等待中...";
+    : "等待中...";
 
   return (
     <Box sx={{ width: "100%", mt: 2 }}>
