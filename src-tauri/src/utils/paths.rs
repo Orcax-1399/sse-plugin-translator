@@ -43,3 +43,8 @@ pub fn get_api_db_path() -> PathBuf {
 pub fn get_search_history_db_path() -> PathBuf {
     get_userdata_dir().join("search_history.db")
 }
+
+/// 获取覆盖关系数据库文件路径
+pub fn get_coverage_db_path() -> PathBuf {
+    get_userdata_dir().join("coverage.db")
+}

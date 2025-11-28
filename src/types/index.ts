@@ -280,3 +280,95 @@ export interface AppState {
   /** 设置错误信息 */
   setError: (error: string | null) => void;
 }
+
+// ============================================
+// Coverage DB 相关类型
+// ============================================
+
+/**
+ * 覆盖记录条目
+ */
+export interface CoverageEntry {
+  /** Form ID (游戏对象ID) */
+  form_id: string;
+  /** 记录类型 (如: NPC_, DIAL) */
+  record_type: string;
+  /** 子记录类型 */
+  subrecord_type: string;
+  /** 索引位置 */
+  index: number;
+  /** 实际文本内容 */
+  text: string;
+  /** 来源MOD名称 */
+  source_mod: string;
+  /** 加载顺序位置 */
+  load_order_pos: number;
+  /** 提取时间戳 (Unix秒) */
+  extracted_at: number;
+}
+
+/**
+ * load order 差异条目
+ */
+export interface LoadOrderDiffItem {
+  /** 插件名称 */
+  plugin_name: string;
+  /** 快照中的位置（可能不存在） */
+  snapshot_position?: number | null;
+  /** 当前加载顺序的位置（可能不存在） */
+  current_position?: number | null;
+  /** 插件路径（可选） */
+  plugin_path?: string | null;
+}
+
+/**
+ * 覆盖状态
+ */
+export interface CoverageStatus {
+  /** 是否已有快照 */
+  has_snapshot: boolean;
+  /** 是否检测到 loadorder.txt */
+  load_order_available: boolean;
+  /** 快照与当前 load order 是否一致 */
+  in_sync: boolean;
+  /** 快照记录数量 */
+  snapshot_count: number;
+  /** 当前扫描到的插件数量 */
+  current_count: number;
+  /** 上次快照时间戳 */
+  snapshot_timestamp: number | null;
+  /** 快照中有但当前没有的插件 */
+  missing_plugins: LoadOrderDiffItem[];
+  /** 当前有但快照中没有的插件 */
+  extra_plugins: LoadOrderDiffItem[];
+}
+
+/**
+ * 覆盖提取统计
+ */
+export interface CoverageExtractionStats {
+  /** 总插件数 */
+  total_plugins: number;
+  /** 已处理插件数 */
+  processed_plugins: number;
+  /** 失败插件数 */
+  failed_plugins: number;
+  /** 提取的总记录数 */
+  total_records: number;
+  /** 错误信息列表 */
+  errors: string[];
+}
+
+/**
+ * 覆盖提取进度
+ */
+export interface CoverageExtractionProgress {
+  /** 当前处理的MOD名称 */
+  current_mod: string | null;
+  /** 当前进度 */
+  current_progress: number;
+  /** 总数 */
+  total: number;
+  /** 是否已经完成 */
+  completed: boolean;
+}

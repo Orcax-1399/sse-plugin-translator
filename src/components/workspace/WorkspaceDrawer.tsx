@@ -12,7 +12,11 @@ import {
   Box,
   Toolbar,
   Typography,
+  IconButton,
+  Tooltip,
 } from "@mui/material";
+import ArchiveOutlinedIcon from "@mui/icons-material/ArchiveOutlined";
+import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "../../stores/appStore";
 import type { PluginInfo } from "../../types";
 
@@ -55,6 +59,14 @@ export default function WorkspaceDrawer({
   const filteredPlugins = plugins.filter((plugin) =>
     plugin.name.toLowerCase().includes(searchQuery.toLowerCase()),
   );
+
+  const handleCoverageDatabaseClick = async () => {
+    try {
+      await invoke("open_coverage_window");
+    } catch (error) {
+      console.error("打开覆盖数据库窗口失败:", error);
+    }
+  };
 
   return (
     <Drawer
@@ -124,10 +136,27 @@ export default function WorkspaceDrawer({
 
       <Divider />
 
-      <Box sx={{ p: 2 }}>
+      <Box
+        sx={{
+          p: 2,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
         <Typography variant="caption" color="text.secondary">
           共 {plugins.length} 个插件
         </Typography>
+
+        <Tooltip title="覆盖关系数据库" placement="top">
+          <IconButton
+            size="small"
+            color="primary"
+            onClick={handleCoverageDatabaseClick}
+          >
+            <ArchiveOutlinedIcon fontSize="inherit" />
+          </IconButton>
+        </Tooltip>
       </Box>
     </Drawer>
   );

@@ -3,6 +3,7 @@ mod atomic_db;
 mod bsa_logger;
 mod commands;
 mod constants;
+mod coverage_db;
 mod esp_service;
 mod plugin_session;
 mod scanner;
@@ -13,13 +14,17 @@ mod utils;
 
 use api_manage::ApiConfigDB;
 use atomic_db::AtomicDB;
+use commands::coverage::CoverageExtractionProgress;
+use coverage_db::CoverageDB;
 use plugin_session::{PluginSessionManager, StringRecord};
 use search_history::SearchHistoryDB;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 use translation_db::TranslationDB;
-use utils::paths::{get_api_db_path, get_atomic_db_path, get_db_path, get_search_history_db_path};
+use utils::paths::{
+    get_api_db_path, get_atomic_db_path, get_coverage_db_path, get_db_path, get_search_history_db_path,
+};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -43,6 +48,11 @@ pub fn run() {
         SearchHistoryDB::new(search_history_db_path.to_str().expect("路径转换失败"))
             .expect("无法初始化搜索历史数据库");
 
+    // 初始化覆盖关系数据库
+    let coverage_db_path = get_coverage_db_path();
+    let coverage_db = CoverageDB::new(coverage_db_path).expect("无法初始化覆盖关系数据库");
+    let coverage_progress = CoverageExtractionProgress::default();
+
     // 初始化插件 Session 管理器
     let session_manager = PluginSessionManager::new();
 
@@ -56,6 +66,8 @@ pub fn run() {
         .manage(Mutex::new(atomic_db))
         .manage(Mutex::new(api_db))
         .manage(Mutex::new(search_history_db))
+        .manage(Mutex::new(coverage_db))
+        .manage(Mutex::new(coverage_progress))
         .manage(Mutex::new(session_manager))
         .manage(editor_data_store)
         .setup(|app| {
@@ -116,7 +128,13 @@ pub fn run() {
             // 搜索历史
             commands::save_search_history,
             commands::get_search_history,
-            commands::delete_search_history_entry
+            commands::delete_search_history_entry,
+            // 覆盖关系
+            commands::open_coverage_window,
+            commands::get_coverage_status,
+            commands::run_coverage_extraction,
+            commands::search_coverage_entries,
+            commands::get_coverage_extraction_progress
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -98,6 +98,44 @@ fn parse_loadorder(loadorder_path: &Path) -> Result<Vec<String>, String> {
     Ok(plugins)
 }
 
+/// 读取 loadorder.txt（如果存在）并返回插件名称列表
+pub fn read_loadorder(game_path: &Path, log: bool) -> Option<Vec<String>> {
+    if !game_path.is_dir() {
+        return None;
+    }
+
+    let version = detect_skyrim_version(game_path);
+
+    if let Some(version) = version {
+        if let Some(loadorder_path) = get_loadorder_path(version) {
+            match parse_loadorder(&loadorder_path) {
+                Ok(order) => {
+                    if log {
+                        println!("✓ 成功读取 loadorder.txt ({} 个插件)", order.len());
+                    }
+                    Some(order)
+                }
+                Err(e) => {
+                    if log {
+                        println!("⚠ 读取 loadorder.txt 失败: {}", e);
+                    }
+                    None
+                }
+            }
+        } else {
+            if log {
+                println!("⚠ 未找到 loadorder.txt ({})", version);
+            }
+            None
+        }
+    } else {
+        if log {
+            println!("⚠ 无法检测 Skyrim 版本，使用字母顺序");
+        }
+        None
+    }
+}
+
 /// 扫描插件文件（支持文件夹或单个文件）
 ///
 /// - 如果是单个插件文件：直接返回该文件
@@ -171,27 +209,7 @@ pub fn scan_plugins(game_path: &str) -> Result<Vec<PluginInfo>, String> {
     }
 
     // 2. 检测 Skyrim 版本并读取 loadorder.txt
-    let version = detect_skyrim_version(&game_path);
-    let loadorder = if let Some(version) = version {
-        if let Some(loadorder_path) = get_loadorder_path(version) {
-            match parse_loadorder(&loadorder_path) {
-                Ok(order) => {
-                    println!("✓ 成功读取 loadorder.txt ({} 个插件)", order.len());
-                    Some(order)
-                }
-                Err(e) => {
-                    println!("⚠ 读取 loadorder.txt 失败: {}", e);
-                    None
-                }
-            }
-        } else {
-            println!("⚠ 未找到 loadorder.txt ({})", version);
-            None
-        }
-    } else {
-        println!("⚠ 无法检测 Skyrim 版本，使用字母顺序");
-        None
-    };
+    let loadorder = read_loadorder(&game_path, true);
 
     // 3. 按照 loadorder.txt 的顺序排列插件
     let mut result = Vec::new();
