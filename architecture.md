@@ -139,6 +139,23 @@ fn get_current_config()       // 获取当前激活配置
 // - 明文存储：API Key不加密（依赖文件系统安全）
 ```
 
+#### 8. 覆盖数据库 (`coverage_db.rs` & `utils::load_order.rs`)
+```rust
+struct CoverageDB { conn: Arc<Mutex<Connection>> }
+
+struct CoverageEntry { form_id, record_type, subrecord_type, index, text, source_mod, load_order_pos, extracted_at }
+struct LoadOrderEntry { position, plugin_name, plugin_path, checksum, extracted_at }
+
+fn upsert_entry()                // 单条覆盖记录 UPSERT
+fn batch_upsert_entries()        // 事务批量写入覆盖记录
+fn replace_load_order_snapshot() // 重建 loadorder 快照
+fn get_load_order_snapshot()     // 读取快照列表
+fn get_last_snapshot_timestamp() // 最近提取时间
+fn search_entries()              // FormID / 文本模糊搜索
+```
+
+`utils::load_order::extract_and_store()` 会读取当前 `loadorder.txt` 与插件列表，调用 `CoverageDB` 批量写入覆盖关系，并通过 callback 推送进度给前端事件系统。
+
 ---
 
 ### 前端模块 (TypeScript/React)
@@ -236,6 +253,24 @@ interface HistoryState {
 // - 内存安全：structuredClone深拷贝状态快照
 ```
 
+**coverageStore.ts** - 覆盖数据库管理
+```typescript
+interface CoverageState {
+    status: CoverageStatus | null        // load order 快照对比
+    extractionProgress: CoverageProgressPayload | null
+    lastExtractionStats: CoverageExtractionStats | null
+    searchResults: CoverageEntry[]
+    isLoadingStatus, isExtracting, isSearching
+    error: string | null
+
+    fetchStatus()        // 调用 get_coverage_status
+    startExtraction()    // 调用 run_coverage_extraction，事件驱动进度
+    searchEntries()      // 调用 search_coverage_entries
+    setExtractionProgress(), setExtractionComplete()
+    clearError(), clearSearchResults()
+}
+```
+
 #### 2. 核心组件 (`components/`)
 
 - **StringTable.tsx** - 翻译表格（MUI DataGrid）
@@ -246,12 +281,15 @@ interface HistoryState {
 - **SettingsModal.tsx** - 设置对话框（3个Tab：词典提取/AI配置/通用设置）
 - **ApiConfigPanel.tsx** - AI配置面板（配置列表+编辑区）
 - **BatchApplyConfirmModal.tsx** - 批量应用确认
+- **coverage/CoverageStatusPanel.tsx** - 覆盖快照状态&差异
+- **coverage/CoverageSearchPanel.tsx** - 覆盖记录检索表格
 
 #### 3. 页面组件 (`pages/`)
 
 - **GamePathSelector.tsx** - 游戏目录选择（首屏）
 - **Workspace.tsx** - 主工作界面（Drawer + Tabs + Panel）
 - **AtomicDbWindow.tsx** - 原子数据库管理窗口（独立窗口）
+- **CoverageWindow.tsx** - 覆盖数据库窗口（事件驱动 Tab）
 
 ---
 
@@ -386,6 +424,38 @@ sessionStore.revertCommand(command)
 Immer 批量更新 → UI自动刷新
 ```
 
+### 7. 覆盖提取与快照同步
+```
+用户打开 CoverageWindow → coverageStore.fetchStatus()
+    ↓
+get_coverage_status() 比较当前扫描与快照，返回差异
+    ↓
+用户点击“开始提取” → run_coverage_extraction()
+    ↓
+后台线程 extract_and_store() → CoverageDB 批量写入
+    ↓
+tauri emit "coverage_progress" (当前MOD / 进度 / 总量)
+    ↓
+coverageStore.setExtractionProgress() 更新 UI
+    ↓
+完成后 emit "coverage_complete" (成功/失败 + 统计)
+    ↓
+coverageStore.setExtractionComplete() → 自动刷新状态卡片
+```
+
+### 8. 覆盖记录搜索流程
+```
+用户输入 FormID / 文本 → coverageStore.searchEntries()
+    ↓
+调用 search_coverage_entries(formId?, text?, limit)
+    ↓
+CoverageDB LIKE + 相关度排序
+    ↓
+返回 CoverageEntry[] → DataGrid 渲染结果
+    ↓
+支持重复搜索 / 清空 / 查看加载顺序
+```
+
 ---
 
 ## 数据库结构
@@ -434,6 +504,39 @@ CREATE INDEX idx_atomic_source ON atomic_translations(source_type);
 - 原文小写存储（大小写不敏感匹配）
 - 使用次数自动统计
 - 来源追踪（基础/AI/手动）
+
+### coverage_entries / coverage_load_order / coverage_meta 表
+```sql
+CREATE TABLE coverage_entries (
+    form_id TEXT NOT NULL,
+    record_type TEXT NOT NULL,
+    subrecord_type TEXT NOT NULL,
+    "index" INTEGER NOT NULL DEFAULT 0,
+    text TEXT NOT NULL,
+    source_mod TEXT NOT NULL,
+    load_order_pos INTEGER NOT NULL,
+    extracted_at INTEGER NOT NULL,
+    PRIMARY KEY (form_id, record_type, subrecord_type, "index")
+);
+
+CREATE TABLE coverage_load_order (
+    position INTEGER PRIMARY KEY,
+    plugin_name TEXT NOT NULL UNIQUE,
+    plugin_path TEXT,
+    checksum TEXT,
+    extracted_at INTEGER NOT NULL
+);
+
+CREATE TABLE coverage_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+```
+
+**用途**：
+- `coverage_entries`：记录每条 FormID 在不同插件间的覆盖文本及其加载顺序位置。
+- `coverage_load_order`：保存提取时的 loadorder 快照，便于后续差异对比。
+- `coverage_meta`：预留统计与状态信息（如最近提取摘要）。
 
 ---
 
@@ -501,6 +604,12 @@ CREATE INDEX idx_atomic_source ON atomic_translations(source_type);
 - `delete_atom_translation(original)`
 - `replace_text_with_atoms(text: String)`
 
+### 覆盖数据库
+- `open_coverage_window()`
+- `get_coverage_status()`
+- `run_coverage_extraction()`
+- `search_coverage_entries(form_id?, text?, limit?)`
+
 ---
 
 ## 事件系统
@@ -508,6 +617,8 @@ CREATE INDEX idx_atomic_source ON atomic_translations(source_type);
 ### Tauri Events
 - `translation-progress` - 翻译刷新进度（每批1000条）
 - `translation-updated` - 编辑器应用翻译（窗口间通信）
+- `coverage_progress` - 覆盖提取实时进度（当前插件/总数）
+- `coverage_complete` - 覆盖提取完成/失败的统计结果
 
 ---
 
@@ -523,6 +634,7 @@ src-tauri/src/
 ├── esp_service.rs       # ESP提取服务
 ├── plugin_session.rs    # Session管理
 ├── atomic_db.rs         # 原子数据库
+├── coverage_db.rs       # 覆盖数据库
 ├── api_manage.rs        # API配置管理
 ├── search_history.rs    # 搜索历史
 ├── commands/            # Tauri命令模块（新增）
@@ -534,26 +646,31 @@ src-tauri/src/
 │   ├── esp.rs           # ESP提取命令
 │   ├── editor.rs        # 编辑窗口命令
 │   ├── atomic.rs        # 原子数据库命令
+│   ├── coverage.rs      # 覆盖数据库命令
 │   ├── api_config.rs    # API配置命令
 │   └── search_history.rs # 搜索历史命令
 └── utils/               # 工具模块（新增）
     ├── mod.rs
-    └── paths.rs         # 统一路径函数
+    ├── paths.rs         # 统一路径函数
+    └── load_order.rs    # 覆盖提取 & loadorder 工具
 
 src/
 ├── components/          # React组件
+│   └── coverage/        # 覆盖状态与搜索面板
 ├── pages/               # 页面组件
 │   ├── GamePathSelector.tsx
 │   ├── Workspace.tsx
 │   ├── EditorWindow.tsx
-│   └── AtomicDbWindow.tsx  # 原子数据库管理窗口
+│   ├── AtomicDbWindow.tsx  # 原子数据库管理窗口
+│   └── CoverageWindow.tsx  # 覆盖数据库窗口
 ├── stores/              # Zustand状态管理
 │   ├── appStore.ts      # 全局应用状态
 │   ├── sessionStore.ts  # Session管理
 │   ├── translationStore.ts  # 翻译数据
 │   ├── notificationStore.ts # 通知系统
 │   ├── apiConfigStore.ts    # API配置管理
-│   └── historyStore.ts  # 历史记录管理 (新增)
+│   ├── historyStore.ts  # 历史记录管理 (新增)
+│   └── coverageStore.ts # 覆盖数据库状态 (新增)
 ├── types/               # TypeScript类型
 └── utils/               # 工具函数
 
@@ -562,10 +679,11 @@ src-tauri/userdata/
 ├── translations.db           # 翻译数据库
 ├── translations.db-wal       # WAL日志
 ├── atomic_translations.db    # 原子数据库
+├── coverage.db               # 覆盖数据库
 └── api.db                    # API配置数据库 (新增)
 ```
 
 ---
 
-**文档版本**: v0.1.2
-**最后更新**: 2025-11-22
+**文档版本**: v0.1.3
+**最后更新**: 2025-11-28
