@@ -114,6 +114,14 @@
    检查 API 配置是否激活、模型名是否正确；关注日志中 `AI API调用失败`、`search预算已耗尽` 等信息。如果服务端不支持 `tool_choice`/function calling，则可能无法命中 search/apply 工具，需更换支持工具调用的模型或代理。
 3. **是否兼容纯文本类 AI 模型？**  
    暂不兼容。AI 翻译流水线依赖工具调用协议（tool calling / MCP），模型必须能够接收 `tools` 参数并在响应中返回 `tool_calls`；普通 Chat Completion 若仅返回文本将被判定失败。
+4. **通过 Mod Organizer 2 启动出现白屏？**  
+   在 MO2 中依次进入 `Settings → Workarounds`，在下方按钮里的 `Executable Blacklist` 追加：
+   ```
+   msedgewebview2.exe
+   msedgeproxy.exe
+   msedge.exe
+   ```
+   MO2 的 USVFS 会尝试 hook WebView 进程，导致 Edge WebView2 启动即白屏；本应用所有文件读写均由 Rust/Tauri 端完成，不依赖 WebView 访问虚拟文件，因此直接将上述进程列入黑名单即可。详见 [MO2 issue #1886](https://github.com/ModOrganizer2/modorganizer/issues/1886#event-1981414962)。
 3. **翻译记录没保存？**  
    只有 `pendingChanges` 中的条目会写入数据库；保存后会清空未保存集合，并可在历史栈里撤销。
 
