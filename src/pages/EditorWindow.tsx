@@ -391,14 +391,6 @@ export default function EditorWindow() {
             取消
           </Button>
           <Button
-            variant="outlined"
-            startIcon={<SmartToy />}
-            onClick={handleAITranslate}
-            color="secondary"
-          >
-            AI 翻译
-          </Button>
-          <Button
             variant="contained"
             startIcon={<Save />}
             onClick={handleApplyTranslation}
