@@ -76,6 +76,28 @@ pub fn delete_atom_translation(
         .map_err(|e| format!("删除原子翻译失败: {}", e))
 }
 
+/// 更新原子翻译（根据ID更新译文和来源）
+#[tauri::command]
+pub fn update_atom_translation(
+    atomic_db: tauri::State<Mutex<AtomicDB>>,
+    id: i64,
+    translated: String,
+    source: String,
+) -> Result<(), String> {
+    let db = atomic_db
+        .lock()
+        .map_err(|e| format!("数据库锁定失败: {}", e))?;
+
+    let atom_source = match source.as_str() {
+        "base" | "Base" => AtomSource::Base,
+        "ai" | "AI" => AtomSource::AI,
+        _ => AtomSource::Manual,
+    };
+
+    db.update_atom(id, &translated, atom_source)
+        .map_err(|e| format!("更新原子翻译失败: {}", e))
+}
+
 /// 使用原子库替换文本
 #[tauri::command]
 pub fn replace_text_with_atoms(

@@ -158,6 +158,32 @@ impl AtomicDB {
         Ok(())
     }
 
+    /// 根据ID更新原子翻译（仅更新译文和来源）
+    pub fn update_atom(&self, id: i64, translated: &str, source: AtomSource) -> SqliteResult<()> {
+        let now = now_timestamp();
+
+        // 1. 更新SQLite
+        let conn = self.conn.lock().unwrap();
+        let affected = conn.execute(
+            "UPDATE atomic_translations SET translated_text = ?1, source_type = ?2, updated_at = ?3 WHERE id = ?4",
+            params![translated, source.as_str(), now, id],
+        )?;
+
+        drop(conn); // 释放锁
+
+        if affected == 0 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+
+        // 2. 重新加载到内存
+        self.load_all_to_memory()?;
+
+        // 3. 重建匹配器（译文变化可能影响替换结果）
+        self.rebuild_matcher()?;
+
+        Ok(())
+    }
+
     /// 获取所有原子翻译
     pub fn get_all_atoms(&self) -> SqliteResult<Vec<AtomTranslation>> {
         let memory = self.memory_index.lock().unwrap();

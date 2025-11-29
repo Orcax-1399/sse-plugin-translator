@@ -12,10 +12,16 @@ import {
   Alert,
   Snackbar,
   Typography,
+  IconButton,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
 } from '@mui/material';
 import { DataGrid, GridColDef, GridRowsProp, GridRowSelectionModel } from '@mui/x-data-grid';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
+import EditIcon from '@mui/icons-material/Edit';
 import { invoke } from '@tauri-apps/api/core';
 
 interface AtomTranslation {
@@ -44,6 +50,11 @@ export default function AtomDbTermsPanel() {
     message: '',
     severity: 'success',
   });
+  // 编辑相关状态
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editingAtom, setEditingAtom] = useState<AtomTranslation | null>(null);
+  const [editTranslated, setEditTranslated] = useState('');
+  const [editSource, setEditSource] = useState<AtomTranslation['source']>('Manual');
 
   // 加载原子数据
   const loadAtoms = async () => {
@@ -122,6 +133,38 @@ export default function AtomDbTermsPanel() {
     }
   };
 
+  // 打开编辑对话框
+  const handleEditClick = (atom: AtomTranslation) => {
+    setEditingAtom(atom);
+    setEditTranslated(atom.translated);
+    setEditSource(atom.source);
+    setEditDialogOpen(true);
+  };
+
+  // 提交编辑
+  const handleEditSubmit = async () => {
+    if (!editingAtom) return;
+    if (!editTranslated.trim()) {
+      showSnackbar('译文不能为空', 'error');
+      return;
+    }
+
+    try {
+      await invoke('update_atom_translation', {
+        id: editingAtom.id,
+        translated: editTranslated.trim(),
+        source: editSource,
+      });
+
+      showSnackbar('修改成功', 'success');
+      setEditDialogOpen(false);
+      setEditingAtom(null);
+      loadAtoms(); // 重新加载数据
+    } catch (error) {
+      showSnackbar('修改失败: ' + String(error), 'error');
+    }
+  };
+
   // 获取来源标签
   const getSourceLabel = (source: AtomTranslation['source']) => {
     switch (source) {
@@ -179,6 +222,25 @@ export default function AtomDbTermsPanel() {
       headerName: '创建时间',
       width: 180,
       valueFormatter: (value) => new Date(value * 1000).toLocaleString('zh-CN'),
+    },
+    {
+      field: 'actions',
+      headerName: '操作',
+      width: 80,
+      sortable: false,
+      filterable: false,
+      renderCell: (params) => (
+        <IconButton
+          size="small"
+          onClick={(e) => {
+            e.stopPropagation(); // 阻止行选择
+            handleEditClick(params.row as AtomTranslation);
+          }}
+          title="编辑"
+        >
+          <EditIcon fontSize="small" />
+        </IconButton>
+      ),
     },
   ];
 
@@ -287,6 +349,53 @@ export default function AtomDbTermsPanel() {
           <Button onClick={() => setAddDialogOpen(false)}>取消</Button>
           <Button onClick={handleAddAtom} variant="contained">
             添加
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* 编辑对话框 */}
+      <Dialog
+        open={editDialogOpen}
+        onClose={() => setEditDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>编辑术语</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <TextField
+              label="英文原文"
+              value={editingAtom?.original || ''}
+              fullWidth
+              disabled
+              helperText="原文不可修改"
+            />
+            <TextField
+              label="中文译文"
+              value={editTranslated}
+              onChange={(e) => setEditTranslated(e.target.value)}
+              fullWidth
+              autoFocus
+            />
+            <FormControl fullWidth>
+              <InputLabel id="edit-source-label">来源</InputLabel>
+              <Select
+                labelId="edit-source-label"
+                value={editSource}
+                label="来源"
+                onChange={(e) => setEditSource(e.target.value as AtomTranslation['source'])}
+              >
+                <MenuItem value="Base">基础</MenuItem>
+                <MenuItem value="AI">AI</MenuItem>
+                <MenuItem value="Manual">手动</MenuItem>
+              </Select>
+            </FormControl>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditDialogOpen(false)}>取消</Button>
+          <Button onClick={handleEditSubmit} variant="contained">
+            保存
           </Button>
         </DialogActions>
       </Dialog>

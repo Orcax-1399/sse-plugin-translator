@@ -96,6 +96,7 @@ struct AtomTranslation {
 // 主要方法
 fn upsert_atom()              // 添加/更新术语
 fn delete_atom()              // 删除术语
+fn update_atom()              // 根据ID更新译文和来源
 fn get_all_atoms()            // 获取全部术语
 fn replace_with_atoms()       // 🔥 核心功能：文本术语标注
 fn batch_upsert()             // 批量导入（预留）
@@ -602,6 +603,7 @@ CREATE TABLE coverage_meta (
 - `get_all_atoms()`
 - `add_atom_translation(original, translated, source)`
 - `delete_atom_translation(original)`
+- `update_atom_translation(id, translated, source)`
 - `replace_text_with_atoms(text: String)`
 
 ### 覆盖数据库

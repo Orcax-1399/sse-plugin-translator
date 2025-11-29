@@ -116,6 +116,7 @@ pub fn run() {
             commands::get_all_atoms,
             commands::add_atom_translation,
             commands::delete_atom_translation,
+            commands::update_atom_translation,
             commands::replace_text_with_atoms,
             // API 配置
             commands::get_api_configs,

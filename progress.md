@@ -30,8 +30,9 @@
 | 阶段24 | lib.rs 原子化重构 | ✅ | 0.5h |
 | 阶段25 | 历史记录和撤销功能 | ✅ | 2h |
 | 阶段26 | 搜索历史交互优化（Chip点击添加原子库） | ✅ | 1h |
+| 阶段27 | 原子库条目编辑功能 | ✅ | 0.5h |
 
-**累计实际工时**: 66.5小时
+**累计实际工时**: 67小时
 
 ---
 
@@ -39,9 +40,9 @@
 
 | 版本 | 状态 | 说明 |
 |------|------|------|
-| v0.5.0 | 🟡 Partially usable | 完成多Session、AI配置、原子/覆盖数据库以及ESP写回（含自动备份）；仍缺完整AI翻译流程，因此标记为可部分使用阶段 |
+| v0.5.5 | 🟡 Partially usable | 完成多Session、AI配置、原子/覆盖数据库以及ESP写回（含自动备份）；仍缺完整AI翻译流程，因此标记为可部分使用阶段 |
 
-> 说明：当前桌面端 Tauri 应用以 v0.5.0 为基线，可用于扫描/翻译/术语管理/覆盖排查/写回等场景，后续里程碑将继续完善 AI 翻译流程。
+> 说明：当前桌面端 Tauri 应用以 v0.5.5 为基线，可用于扫描/翻译/术语管理/覆盖排查/写回等场景，后续里程碑将继续完善 AI 翻译流程。
 
 ---
 
@@ -70,55 +71,49 @@
 - **历史记录和撤销功能**（Ctrl+Z撤销、批量操作记录、Session隔离）
 - **搜索历史交互优化**（Chip点击快速添加原子库、Toast提示、自动删除记录）
 - **AI翻译 search 预算修复**（动态预算+缓存命中策略，解决 search 工具频繁耗尽导致翻译中断的问题）
+- **原子库条目编辑功能**（表格操作列编辑按钮、编辑对话框、修改译文和来源）
 
 ### 🚧 当前阶段
-**阶段26：搜索历史交互优化** - ✅ 已完成
+**阶段27：原子库条目编辑功能** - ✅ 已完成
 
 #### 核心功能
-- **Chip点击添加原子库**：候选译文Chip可点击，自动添加到原子数据库
-- **自动删除搜索记录**：点击后删除整条搜索历史，保持数据库清洁
-- **Toast实时反馈**：成功/失败提示，提升用户体验
-- **视觉交互优化**：Hover效果，明确可点击性
+- **表格操作列**：每行新增编辑按钮（EditIcon），点击打开编辑对话框
+- **编辑对话框**：显示原文（只读）、可编辑译文、来源选择（Base/AI/Manual）
+- **后端更新接口**：`update_atom_translation(id, translated, source)` 根据ID更新
 
 #### 关键实现
 
-1. **后端新增删除接口**
-   - `SearchHistoryDB::delete_entry()` - 删除单条搜索历史记录
-   - `delete_search_history_entry` - Tauri命令注册
-   - 在 `lib.rs` 中注册新命令
+1. **后端（Rust）**
+   - `AtomicDB::update_atom(id, translated, source)` - 执行UPDATE语句
+   - `update_atom_translation` Tauri命令 - 前端调用入口
+   - 自动刷新内存索引和重建Aho-Corasick匹配器
 
-2. **SearchHistoryPanel.tsx** - 交互优化
-   - `handleChipClick()` - 点击处理逻辑：
-     1. 调用 `add_atom_translation(term, candidate, "manual")`
-     2. 调用 `delete_search_history_entry(term)`
-     3. 刷新表格数据
-     4. 显示Toast提示
-   - Chip组件样式增强：
-     - `cursor: 'pointer'` - 鼠标指针
-     - `&:hover` - 悬停高亮效果
-   - Snackbar Toast组件：
-     - 3秒自动关闭
-     - 右下角显示
-     - 成功/失败两种状态
+2. **前端（TypeScript/React）**
+   - `AtomDbTermsPanel.tsx` 新增编辑状态和对话框
+   - DataGrid列定义新增"操作"列
+   - `handleEditClick()` / `handleEditSubmit()` 处理函数
+   - 使用MUI Select组件选择来源类型
 
 3. **数据流向**
    ```
-   用户点击Chip
+   点击编辑按钮
       ↓
-   添加到原子库（source=Manual）
+   打开对话框（填充当前值）
       ↓
-   删除搜索历史记录
+   修改译文/来源
       ↓
-   刷新表格UI
+   invoke('update_atom_translation')
       ↓
-   Toast提示反馈
+   后端UPDATE + 内存刷新
+      ↓
+   loadAtoms() 刷新表格
    ```
 
 #### 遵循原则
-- **KISS**：复用现有 `add_atom_translation` API，最小化代码改动
-- **DRY**：利用已有的数据库基础设施
-- **YAGNI**：仅实现点击添加功能，不过度设计
-- **用户体验**：即时反馈、清晰的视觉提示
+- **KISS**：复用现有Dialog组件模式
+- **DRY**：复用showSnackbar/loadAtoms等函数
+- **YAGNI**：只实现单条编辑，暂不支持批量
+- **并发安全**：沿用Mutex锁机制
 
 ---
 
