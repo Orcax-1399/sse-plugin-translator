@@ -188,7 +188,7 @@ export async function translateBatchWithAI(
           model: apiConfig.modelName,
           messages: messages as ChatCompletionMessageParam[],
           tools: [toolDefinitions.search, toolDefinitions.applyTranslations],
-          tool_choice: "auto",
+          tool_choice: "required",
           temperature: 0.1,
           max_tokens: apiConfig.maxTokens,
         });
