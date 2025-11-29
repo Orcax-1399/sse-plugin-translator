@@ -98,6 +98,39 @@ export const toolDefinitions = {
       },
     },
   },
+  skip: {
+    type: "function" as const,
+    function: {
+      name: "skip",
+      description:
+        "当某些条目无需翻译（如纯数字、纯符号或已是目标语言）时，调用此工具跳过它们。",
+      parameters: {
+        type: "object",
+        properties: {
+          entries: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                index: {
+                  type: "number",
+                  description: "无需翻译的CSV行index",
+                },
+                reason: {
+                  type: "string",
+                  description:
+                    "可选原因说明，用于记录为何跳过该条目（例如\"纯数字\"、\"已为中文\"等）",
+                },
+              },
+              required: ["index"],
+            },
+            description: "需要跳过的条目列表",
+          },
+        },
+        required: ["entries"],
+      },
+    },
+  },
 };
 
 /**
@@ -318,6 +351,70 @@ export function executeApply(
       error: `应用翻译失败: ${String(error)}`,
     };
   }
+}
+
+/**
+ * 执行skip工具
+ * 从session state中移除无需翻译的条目
+ */
+export function executeSkip(
+  entries: Array<{ index: number; reason?: string }>,
+  sessionState: SessionState,
+): {
+  success: boolean;
+  error?: string;
+  invalidIndexes?: number[];
+  skippedEntries?: Array<{ index: number; reason?: string }>;
+} {
+  if (!entries || entries.length === 0) {
+    return {
+      success: false,
+      error: "entries参数不能为空",
+      invalidIndexes: [],
+    };
+  }
+
+  // 去重 + 规范化
+  const normalized = Array.from(
+    new Map(
+      entries.map((entry) => [
+        entry.index,
+        {
+          index: entry.index,
+          reason:
+            typeof entry.reason === "string"
+              ? entry.reason.trim().slice(0, 200)
+              : undefined,
+        },
+      ]),
+    ).values(),
+  );
+
+  const invalidIndexes: number[] = [];
+  normalized.forEach((entry) => {
+    const exists = sessionState.csv.some((row) => row.index === entry.index);
+    if (!exists) {
+      invalidIndexes.push(entry.index);
+    }
+  });
+
+  if (invalidIndexes.length > 0) {
+    return {
+      success: false,
+      error: `以下index在CSV中不存在: ${invalidIndexes.join(", ")}`,
+      invalidIndexes,
+    };
+  }
+
+  const indicesToSkip = new Set(normalized.map((entry) => entry.index));
+  sessionState.csv = sessionState.csv.filter(
+    (row) => !indicesToSkip.has(row.index),
+  );
+
+  return {
+    success: true,
+    skippedEntries: normalized,
+  };
 }
 
 /**

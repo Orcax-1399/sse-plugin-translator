@@ -25,6 +25,12 @@ export interface SessionState {
     preview: Array<{ index: number; translated: string }>;
     timestamp: number;
   };
+  /** 最近一次 skip 的摘要（供AI确认跳过结果） */
+  recentSkip?: {
+    indices: number[];
+    preview: Array<{ index: number; reason?: string }>;
+    timestamp: number;
+  };
   lastError?: {
     tool: string;
     args: any;
@@ -52,7 +58,7 @@ export function buildSystemPrompt(): string {
 ## 核心规则
 
 1. **你只能输出工具调用，禁止直接输出翻译文本或任何解释性文字**
-2. 你有两个工具：search（查询术语）和 apply_translations（提交翻译）
+2. 你有三个工具：search（查询术语）、apply_translations（提交翻译）与 skip（跳过无需翻译的条目）
 3. 当遇到了**人名**, **地名**, **术语**的时候，应先检查 SEARCH 缓存，如果没有合适候选再调用 search
 4. search 有调用预算，User Prompt 会提供 “budgetUsed/budgetTotal”，请优先复用缓存，只有在确实需要时才查询
 
@@ -72,6 +78,11 @@ export function buildSystemPrompt(): string {
 - index 对应CSV中的行号
 - 你应该尽可能批量提交（一次多条），提高效率
 - 提交后，对应的CSV行会被删除，任务进度推进
+
+### skip(entries: Array<{index: number, reason?: string}>)
+- 用于跳过无需翻译的条目，例如纯数字/纯符号、空字符串、已经是中文的文本
+- 跳过不会写入译文，只是移除待办条目，请仅在确定无需翻译时使用
+- reason 字段可选，可提供\"纯数字\"、\"已为中文\"等说明，帮助审计
 
 ## 术语标注格式
 
@@ -188,6 +199,24 @@ export function buildUserPrompt(state: SessionState): string {
     }
   } else {
     prompt += `- 尚未提交 apply_translations\n`;
+  }
+  if (state.recentSkip) {
+    const skipCount = state.recentSkip.indices.length;
+    const indices = state.recentSkip.indices.slice(-5).join(", ");
+    const preview = state.recentSkip.preview
+      .slice(-3)
+      .map(
+        (p) =>
+          `${p.index}:\"${
+            p.reason && p.reason.length > 0 ? p.reason.slice(0, 20) : "无说明"
+          }\"`,
+      )
+      .join("; ");
+    prompt += `- 上次skip: 跳过 ${skipCount} 条\n`;
+    prompt += `  * index: [${indices}${skipCount > 5 ? "..." : ""}]\n`;
+    if (preview) {
+      prompt += `  * 理由: ${preview}\n`;
+    }
   }
   prompt += `\n`;
 

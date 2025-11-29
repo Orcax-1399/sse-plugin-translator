@@ -12,15 +12,30 @@ import {
   toolDefinitions,
   executeSearch,
   executeApply,
+  executeSkip,
   preprocessBatch,
   type SearchExecutionResult,
 } from "./aiTools";
 
-const MIN_SEARCH_BUDGET = 5;
-const MAX_SEARCH_BUDGET = 15;
+const MIN_SEARCH_BUDGET = 8;
+const MAX_SEARCH_BUDGET = 30;
 
-function computeSearchBudget(total: number) {
-  const rough = Math.ceil(total / 6);
+function computeSearchBudget(entries: Array<{ text: string }>) {
+  if (!entries || entries.length === 0) {
+    return MIN_SEARCH_BUDGET;
+  }
+
+  const totalCount = entries.length;
+  const totalLength = entries.reduce(
+    (sum, entry) => sum + (entry.text?.length ?? 0),
+    0,
+  );
+
+  // 约每4条分配1次预算，长文本按每600字符补贴一次
+  const entryFactor = Math.ceil(totalCount / 4);
+  const lengthFactor = Math.ceil(totalLength / 600);
+  const rough = entryFactor + lengthFactor;
+
   return Math.min(MAX_SEARCH_BUDGET, Math.max(MIN_SEARCH_BUDGET, rough));
 }
 
@@ -132,7 +147,7 @@ export async function translateBatchWithAI(
 
     // 2. 初始化Session状态
     const totalCount = entries.length;
-    const searchBudget = computeSearchBudget(totalCount);
+    const searchBudget = computeSearchBudget(preprocessed);
     sessionState = {
       csv: preprocessed,
       searchCache: {},
@@ -187,7 +202,11 @@ export async function translateBatchWithAI(
         completion = await client.chat.completions.create({
           model: apiConfig.modelName,
           messages: messages as ChatCompletionMessageParam[],
-          tools: [toolDefinitions.search, toolDefinitions.applyTranslations],
+          tools: [
+            toolDefinitions.search,
+            toolDefinitions.applyTranslations,
+            toolDefinitions.skip,
+          ],
           tool_choice: "required",
           temperature: 0.1,
           max_tokens: apiConfig.maxTokens,
@@ -238,7 +257,7 @@ export async function translateBatchWithAI(
           tool: "system",
           args: {},
           error:
-            "你必须调用工具（search或apply_translations），不能直接输出文本。",
+            "你必须调用工具（search / apply_translations / skip），不能直接输出文本。",
           aiResponse: aiResponsePreview,
         };
         continue;
@@ -304,7 +323,7 @@ export async function translateBatchWithAI(
             );
             const budgetTotal =
               sessionState.searchMeta?.budgetTotal ??
-              computeSearchBudget(totalCount);
+              computeSearchBudget(sessionState.csv);
             const budgetUsed = sessionState.searchMeta?.budgetUsed ?? 0;
             const availableBudget = Math.max(0, budgetTotal - budgetUsed);
 
@@ -472,12 +491,102 @@ export async function translateBatchWithAI(
             ...sessionState.searchMeta,
             deferredTerms: [],
             budgetUsed: 0,
-            budgetTotal: computeSearchBudget(
-              Math.max(1, sessionState.csv.length),
-            ),
+            budgetTotal: computeSearchBudget(sessionState.csv),
           };
 
           onProgress(completed, totalCount);
+        } else if (toolName === "skip") {
+          let entries = args.entries;
+          if (typeof entries === "string") {
+            try {
+              entries = JSON.parse(entries);
+            } catch (error) {
+              sessionState.lastError = {
+                tool: "skip",
+                args,
+                error: `entries格式错误: ${String(error)}`,
+                aiResponse: aiResponsePreview,
+              };
+              hasError = true;
+              break;
+            }
+          }
+
+          const skipItems = Array.isArray(entries)
+            ? (entries as Array<{ index: number; reason?: string }>)
+            : [];
+
+          const normalized = skipItems
+            .map((item) => ({
+              index:
+                typeof item.index === "number"
+                  ? item.index
+                  : Number(item.index),
+              reason:
+                typeof item.reason === "string"
+                  ? item.reason.trim().slice(0, 200)
+                  : undefined,
+            }))
+            .filter((item) => Number.isFinite(item.index));
+
+          if (normalized.length === 0) {
+            sessionState.lastError = {
+              tool: "skip",
+              args,
+              error: "entries不能为空，且必须包含有效的index",
+              aiResponse: aiResponsePreview,
+            };
+            hasError = true;
+            break;
+          }
+
+          const skipResult = executeSkip(normalized, sessionState);
+          if (!skipResult.success) {
+            console.error(
+              "[AI翻译] skip执行失败:",
+              skipResult.error || "未知错误",
+            );
+            emitStatus(
+              "error",
+              `skip执行失败: ${skipResult.error || "未知错误"}`,
+            );
+            sessionState.lastError = {
+              tool: "skip",
+              args,
+              error: skipResult.error || "未知错误",
+              aiResponse: aiResponsePreview,
+            };
+            hasError = true;
+            break;
+          }
+
+          const skippedEntries = skipResult.skippedEntries ?? [];
+          const completed = totalCount - sessionState.csv.length;
+          sessionState.completedCount = completed;
+          sessionState.recentSkip = {
+            indices: skippedEntries.map((entry) => entry.index).slice(-5),
+            preview: skippedEntries.slice(-3),
+            timestamp: Date.now(),
+          };
+
+          console.log(
+            `[AI翻译] skip完成，跳过了 ${skippedEntries.length} 条无需翻译的记录`,
+          );
+          emitStatus(
+            "info",
+            `AI跳过 ${skippedEntries.length} 条无需翻译的记录`,
+          );
+          onProgress(completed, totalCount);
+        } else {
+          console.warn(`[AI翻译] 收到未知工具: ${toolName}`);
+          sessionState.lastError = {
+            tool: toolName || "unknown",
+            args,
+            error: "不支持的工具调用",
+            aiResponse: aiResponsePreview,
+          };
+          hasError = true;
+          break;
         }
       }
 
