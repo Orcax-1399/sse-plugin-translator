@@ -51,6 +51,7 @@ import {
   type CancellationToken,
   type AiStatusUpdate,
 } from "../utils/aiTranslation";
+import type { SearchResult } from "../utils/aiPrompts";
 
 // Thinking 动画组件（Claude/ChatGPT 风格 shimmer 效果）
 const ThinkingText = styled(Typography)(({ theme }) => ({
@@ -98,6 +99,45 @@ const statusItemVariants = {
       duration: 0.2,
     },
   },
+};
+
+const AI_TRANSLATION_CHUNK_SIZE = 50;
+
+const buildSessionSearchCache = (
+  sessionId: string,
+): Record<string, SearchResult> => {
+  const session = useSessionStore
+    .getState()
+    .openedSessions.get(sessionId);
+
+  const cache: Record<string, SearchResult> = {};
+  if (!session) {
+    return cache;
+  }
+
+  session.strings.forEach((record) => {
+    const status = record.translation_status || "untranslated";
+    const original = record.original_text?.trim();
+    const translated = record.translated_text?.trim();
+
+    if (
+      !original ||
+      !translated ||
+      status === "untranslated" ||
+      status.length === 0
+    ) {
+      return;
+    }
+
+    if (!cache[original]) {
+      cache[original] = {
+        status: "ok",
+        candidates: [{ en: original, zh: translated }],
+      };
+    }
+  });
+
+  return cache;
 };
 
 interface SessionPanelProps {
@@ -461,11 +501,21 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
       }
     }
 
+    const totalEntries = entries.length;
+    const entryChunks: TranslationEntry[][] = [];
+    for (let i = 0; i < entries.length; i += AI_TRANSLATION_CHUNK_SIZE) {
+      entryChunks.push(entries.slice(i, i + AI_TRANSLATION_CHUNK_SIZE));
+    }
+
+    console.log(
+      `[AI翻译] 将 ${totalEntries} 条拆分为 ${entryChunks.length} 个批次，每批最多 ${AI_TRANSLATION_CHUNK_SIZE} 条`,
+    );
+
     // 开始AI翻译
     setIsAiTranslating(true);
     setAiProgress(0);
     setAiCompleted(0);
-    setAiTotal(entries.length);
+    setAiTotal(totalEntries);
     setStatusHistory([]); // 清空状态历史
     setCurrentIteration(0); // 重置迭代计数
     setAiStatus(null); // 清空当前状态
@@ -476,62 +526,94 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
     cancellationTokenRef.current = cancellationToken;
 
     try {
-      const result = await translateBatchWithAI(
-        entries,
-        currentApi,
-        (completed, total) => {
-          // 进度回调
-          setAiCompleted(completed);
-          setAiTotal(total);
-          setAiProgress((completed / total) * 100);
-        },
-        (_index, recIndex, formId, recordType, subrecordType, translated) => {
-          // Apply回调：更新UI（跳过历史记录）
-          if (updateStringRecord) {
-            updateStringRecord(
-              sessionData.session_id,
-              formId,
-              recordType,
-              subrecordType,
-              recIndex,
-              translated,
-              "ai", // 标记为AI翻译
-              true, // ⚠️ skipHistory=true：跳过单条历史记录
-            );
-          }
+      const pushStatus = (status: AiStatusUpdate) => {
+        setAiStatus(status);
+        setStatusHistory((prev) => [...prev.slice(-4), status]);
+        lastStatusTimeRef.current = Date.now();
+        setIsHeartbeatActive(false);
+      };
 
-          // 更新 historyRecords 中对应记录的 afterState
-          const recordId = `${formId}|${recordType}|${subrecordType}|${recIndex}`;
-          const historyRecord = historyRecords.find((hr) => hr.recordId === recordId);
-          if (historyRecord) {
-            const afterRecord = sessionData.strings.find(
-              (s) =>
-                s.form_id === formId &&
-                s.record_type === recordType &&
-                s.subrecord_type === subrecordType &&
-                s.index === recIndex,
-            );
-            if (afterRecord) {
-              historyRecord.afterState = structuredClone({
-                ...afterRecord,
-                translated_text: translated,
-                translation_status: "ai",
-              });
+      let chunkOffset = 0;
+      let iterationBase = 0;
+      let aggregatedTranslated = 0;
+      let finalError: string | undefined;
+      let overallSuccess = true;
+
+      for (let chunkIndex = 0; chunkIndex < entryChunks.length; chunkIndex++) {
+        const chunk = entryChunks[chunkIndex];
+        let chunkMaxIteration = 0;
+
+        const chunkResult = await translateBatchWithAI(
+          chunk,
+          currentApi,
+          (completed, _chunkTotal) => {
+            const overallCompleted = chunkOffset + completed;
+            setAiCompleted(overallCompleted);
+            setAiTotal(totalEntries);
+            setAiProgress((overallCompleted / totalEntries) * 100);
+          },
+          (_index, recIndex, formId, recordType, subrecordType, translated) => {
+            if (updateStringRecord) {
+              updateStringRecord(
+                sessionData.session_id,
+                formId,
+                recordType,
+                subrecordType,
+                recIndex,
+                translated,
+                "ai",
+                true,
+              );
             }
-          }
-        },
-        cancellationToken, // 传递取消令牌
-        (status) => {
-          // 更新当前状态
-          setAiStatus(status);
-          // 追加到状态历史（保留最近 5 条）
-          setStatusHistory((prev) => [...prev.slice(-4), status]);
-          // 重置心跳计时器
-          lastStatusTimeRef.current = Date.now();
-          setIsHeartbeatActive(false);
-        },
-        (iteration) => setCurrentIteration(iteration), // 迭代回调
-      );
+
+            const recordId = `${formId}|${recordType}|${subrecordType}|${recIndex}`;
+            const historyRecord = historyRecords.find((hr) => hr.recordId === recordId);
+            if (historyRecord) {
+              const latestSession = useSessionStore
+                .getState()
+                .openedSessions.get(sessionData.session_id);
+              const afterRecord = latestSession?.strings.find(
+                (s) =>
+                  s.form_id === formId &&
+                  s.record_type === recordType &&
+                  s.subrecord_type === subrecordType &&
+                  s.index === recIndex,
+              );
+              if (afterRecord) {
+                historyRecord.afterState = structuredClone({
+                  ...afterRecord,
+                  translated_text: translated,
+                  translation_status: "ai",
+                });
+              }
+            }
+          },
+          cancellationToken,
+          pushStatus,
+          (iteration) => {
+            chunkMaxIteration = Math.max(chunkMaxIteration, iteration);
+            setCurrentIteration(iterationBase + iteration);
+          },
+          buildSessionSearchCache(sessionData.session_id),
+        );
+
+        aggregatedTranslated += chunkResult.translatedCount;
+
+        if (!chunkResult.success) {
+          overallSuccess = false;
+          finalError = chunkResult.error;
+          break;
+        }
+
+        chunkOffset += chunk.length;
+        iterationBase += Math.max(chunkMaxIteration, 0);
+      }
+
+      const result = {
+        success: overallSuccess,
+        translatedCount: aggregatedTranslated,
+        error: finalError,
+      };
 
       // 📝 翻译完成后，生成一个批量历史记录
       if (result.translatedCount > 0) {

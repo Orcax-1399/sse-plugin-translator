@@ -6,7 +6,7 @@
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import type { ApiConfig } from "../stores/apiConfigStore";
-import type { SessionState } from "./aiPrompts";
+import type { SessionState, SearchResult } from "./aiPrompts";
 import { buildMessages } from "./aiPrompts";
 import {
   toolDefinitions,
@@ -122,6 +122,7 @@ export async function translateBatchWithAI(
   cancellationToken?: CancellationToken,
   onStatusChange?: (status: AiStatusUpdate) => void,
   onIterationChange?: (iteration: number) => void,
+  initialSearchCache?: Record<string, SearchResult>,
 ): Promise<TranslationResult> {
   if (entries.length === 0) {
     return { success: true, translatedCount: 0 };
@@ -165,7 +166,7 @@ export async function translateBatchWithAI(
     const searchBudget = computeSearchBudget(preprocessed);
     sessionState = {
       csv: preprocessed,
-      searchCache: {},
+      searchCache: initialSearchCache ? { ...initialSearchCache } : {},
       totalCount,
       completedCount: 0,
       searchMeta: {
