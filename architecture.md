@@ -425,7 +425,27 @@ sessionStore.revertCommand(command)
 Immer 批量更新 → UI自动刷新
 ```
 
-### 7. 覆盖提取与快照同步
+### 7. AI翻译自动扩散流程
+```
+AI调用 apply_translations({ index: 5, translated: "译文" })
+    ↓
+executeApply 接收 translations + expandIndices resolver
+    ↓
+对每个 translation:
+    1. 加入 allTranslations
+    2. 调用 expandIndices(index) 获取相同原文的其他索引
+    3. 过滤掉已处理的索引，加入 allTranslations
+    ↓
+从 sessionState.csv 删除所有已处理的行
+    ↓
+批量调用 onApply 更新 UI
+    ↓
+返回 { appliedIndices, expandedCount }
+    ↓
+状态回调通知用户："AI提交 X 条，自动扩散 Y 条重复原文"
+```
+
+### 8. 覆盖提取与快照同步
 ```
 用户打开 CoverageWindow → coverageStore.fetchStatus()
     ↓
@@ -687,5 +707,5 @@ src-tauri/userdata/
 
 ---
 
-**文档版本**: v0.1.3
-**最后更新**: 2025-11-28
+**文档版本**: v0.1.4
+**最后更新**: 2025-11-30

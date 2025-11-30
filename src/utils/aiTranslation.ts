@@ -170,9 +170,34 @@ export async function translateBatchWithAI(
       entryMap.set(entry.index, entry);
     });
 
+    // 4. 构建原文到索引的映射（用于自动扩散重复原文）
+    const originalTextIndexMap = new Map<string, Set<number>>();
+    entries.forEach((entry) => {
+      const key = entry.originalText; // 使用原始原文作为 key
+      if (!originalTextIndexMap.has(key)) {
+        originalTextIndexMap.set(key, new Set());
+      }
+      originalTextIndexMap.get(key)!.add(entry.index);
+    });
+
+    // 5. 创建扩散 resolver：给定 index，返回所有仍在 csv 中且原文相同的其他 index
+    const expandIndices = (index: number): number[] => {
+      const entry = entryMap.get(index);
+      if (!entry) return [];
+
+      const sameTextIndices = originalTextIndexMap.get(entry.originalText);
+      if (!sameTextIndices) return [];
+
+      // 过滤：只返回仍在 csv 中的索引（排除已翻译的）
+      const currentIndices = new Set(sessionState!.csv.map((row) => row.index));
+      return Array.from(sameTextIndices).filter(
+        (idx) => idx !== index && currentIndices.has(idx),
+      );
+    };
+
     let maxIterations = 50; // 最大迭代次数，防止死循环
 
-    // 4. Session循环
+    // 6. Session循环
     console.log(`[AI翻译] 开始翻译，共 ${totalCount} 条`);
     while (sessionState.csv.length > 0 && maxIterations > 0) {
       // 检查是否被取消
@@ -443,6 +468,7 @@ export async function translateBatchWithAI(
                 );
               }
             },
+            expandIndices, // 传入扩散 resolver
           );
 
           if (!applyResult.success) {
@@ -464,9 +490,19 @@ export async function translateBatchWithAI(
             break;
           }
 
+          // 日志：包含扩散信息
+          const directCount = translationItems.length;
+          const expandedCount = applyResult.expandedCount ?? 0;
           console.log(
-            `[AI翻译] apply_translations完成，翻译了 ${translationItems.length} 条`,
+            `[AI翻译] apply_translations完成，AI提交 ${directCount} 条${expandedCount > 0 ? `，自动扩散 ${expandedCount} 条` : ""}`,
           );
+          // 状态回调：通知用户扩散信息
+          if (expandedCount > 0) {
+            emitStatus(
+              "info",
+              `AI提交 ${directCount} 条，自动扩散 ${expandedCount} 条重复原文`,
+            );
+          }
           // 更新进度与最近一次apply概览
           const completed = totalCount - sessionState.csv.length;
           sessionState.completedCount = completed;

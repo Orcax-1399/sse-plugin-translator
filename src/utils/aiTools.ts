@@ -298,16 +298,19 @@ export async function executeSearch(
 /**
  * 执行apply_translations工具
  * 从session state删除已翻译的条目，并调用回调更新UI
+ * 支持自动扩散：当提供 expandIndices 时，会自动将翻译应用到相同原文的其他条目
  */
 export function executeApply(
   translations: Array<{ index: number; translated: string }>,
   sessionState: SessionState,
   onApply: (index: number, translated: string) => void,
+  expandIndices?: (index: number) => number[], // 扩散 resolver：给定 index，返回其他仍待翻译的相同原文索引
 ): {
   success: boolean;
   error?: string;
   invalidIndexes?: number[];
   appliedIndices?: number[];
+  expandedCount?: number; // 自动扩散的条目数量
 } {
   const invalidIndexes: number[] = [];
 
@@ -330,20 +333,44 @@ export function executeApply(
 
   // 执行apply_translations
   try {
-    // 1. 从csv中删除已翻译的行
+    // 1. 收集所有需要应用的翻译（原始 + 扩散）
+    const allTranslations: Array<{ index: number; translated: string }> = [];
+    const processedIndices = new Set(translations.map((t) => t.index));
+    let expandedCount = 0;
+
+    for (const trans of translations) {
+      allTranslations.push(trans);
+
+      // 2. 查找并扩散到相同原文的其他条目
+      if (expandIndices) {
+        const siblings = expandIndices(trans.index);
+        for (const siblingIndex of siblings) {
+          if (!processedIndices.has(siblingIndex)) {
+            allTranslations.push({
+              index: siblingIndex,
+              translated: trans.translated,
+            });
+            processedIndices.add(siblingIndex); // 防止重复
+            expandedCount++;
+          }
+        }
+      }
+    }
+
+    // 3. 从csv中删除所有已应用的行
     sessionState.csv = sessionState.csv.filter(
-      (row) => !translations.some((t) => t.index === row.index),
+      (row) => !allTranslations.some((t) => t.index === row.index),
     );
 
-    // 2. 调用回调更新UI（translationStore）
-    translations.forEach((trans) => {
+    // 4. 调用回调更新UI（translationStore）
+    allTranslations.forEach((trans) => {
       onApply(trans.index, trans.translated);
     });
 
-    // 3. 收集成功应用的索引
-    const appliedIndices = translations.map((t) => t.index);
+    // 5. 收集成功应用的索引
+    const appliedIndices = allTranslations.map((t) => t.index);
 
-    return { success: true, appliedIndices };
+    return { success: true, appliedIndices, expandedCount };
   } catch (error) {
     console.error("executeApply失败:", error);
     return {
@@ -437,14 +464,16 @@ export async function preprocessTerms(text: string): Promise<string> {
 
 /**
  * 批量术语预处理
+ * 返回结构包含原始原文（rawText）和标注后文本（text）
  */
 export async function preprocessBatch(
   entries: Array<{ index: number; text: string }>,
-): Promise<Array<{ index: number; text: string }>> {
+): Promise<Array<{ index: number; text: string; rawText: string }>> {
   const preprocessed = await Promise.all(
     entries.map(async (entry) => ({
       index: entry.index,
-      text: await preprocessTerms(entry.text),
+      text: await preprocessTerms(entry.text), // 术语标注后的文本
+      rawText: entry.text, // 原始原文
     })),
   );
   return preprocessed;

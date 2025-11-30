@@ -4,7 +4,11 @@
  */
 
 export interface SessionState {
-  csv: Array<{ index: number; text: string }>;
+  csv: Array<{
+    index: number;
+    text: string; // 术语标注后的文本（给 AI 看）
+    rawText: string; // 原始原文（用于匹配重复）
+  }>;
   searchCache: Record<string, SearchResult>;
   /** 当前批次总条目数，用于展示整体进度 */
   totalCount: number;
@@ -78,6 +82,7 @@ export function buildSystemPrompt(): string {
 - index 对应CSV中的行号
 - 你应该尽可能批量提交（一次多条），提高效率
 - 提交后，对应的CSV行会被删除，任务进度推进
+- 如果CSV里存在多个原文完全相同的条目，你只需提交其中一个index，系统会自动把相同译文扩散到其余相同原文
 
 ### skip(entries: Array<{index: number, reason?: string}>)
 - 用于跳过无需翻译的条目，例如纯数字/纯符号、空字符串、已经是中文的文本
