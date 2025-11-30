@@ -14,3 +14,12 @@ pub fn set_game_path(path: String) -> Result<(), String> {
     write_settings(&settings)?;
     Ok(())
 }
+
+/// 清除游戏路径
+#[tauri::command]
+pub fn clear_game_path() -> Result<(), String> {
+    let mut settings = read_settings()?;
+    settings.game = None;
+    write_settings(&settings)?;
+    Ok(())
+}

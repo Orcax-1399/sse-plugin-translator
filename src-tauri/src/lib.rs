@@ -74,7 +74,7 @@ pub fn run() {
             let window_builder =
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                     .title("sse-plugin-translator")
-                    .inner_size(800.0, 600.0)
+                    .inner_size(1280.0, 800.0)
                     .resizable(true)
                     .center()
                     .additional_browser_args("--disable-gpu --disable-d3d11");
@@ -86,6 +86,7 @@ pub fn run() {
             // 配置管理
             commands::get_settings,
             commands::set_game_path,
+            commands::clear_game_path,
             // 插件扫描
             commands::validate_game_directory,
             commands::get_plugin_list,

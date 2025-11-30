@@ -12,6 +12,7 @@ import WorkspaceAppBar from "../components/workspace/WorkspaceAppBar";
 import WorkspaceDrawer from "../components/workspace/WorkspaceDrawer";
 import SessionArea from "../components/workspace/SessionArea";
 import type { PluginInfo } from "../types";
+import { WORKSPACE_STORAGE_KEY } from "../constants/storageKeys";
 
 /**
  * 打开原子数据库管理窗口（独立函数，避免闭包捕获 openedSessions）
@@ -42,6 +43,7 @@ export default function Workspace() {
   const navigate = useNavigate();
 
   const { gamePath, loadSettings } = useAppStore();
+  const clearGamePath = useAppStore((state) => state.clearGamePath);
 
   // ✅ 只获取需要的 action 函数（zustand actions 引用稳定）
   const openSession = useSessionStore((state) => state.openSession);
@@ -109,6 +111,21 @@ export default function Workspace() {
     setSettingsOpen(false);
   }, []);
 
+  const handleResetWorkspace = useCallback(async () => {
+    try {
+      localStorage.removeItem(WORKSPACE_STORAGE_KEY);
+    } catch (error) {
+      console.warn("移除本地工作区缓存失败:", error);
+    }
+    try {
+      await clearGamePath?.();
+    } catch (error) {
+      console.error("清除工作区路径失败:", error);
+    } finally {
+      navigate("/");
+    }
+  }, [clearGamePath, navigate]);
+
   // 处理插件点击：检查是否已打开，已打开则切换，未打开则新建
   const handlePluginClick = useCallback(
     (plugin: PluginInfo) => {
@@ -139,6 +156,7 @@ export default function Workspace() {
         gamePath={gamePath}
         onOpenSettings={handleOpenSettings}
         onOpenAtomicDb={openAtomicDbWindow}
+        onResetWorkspace={handleResetWorkspace}
       />
 
       {/* 左侧插件列表 */}

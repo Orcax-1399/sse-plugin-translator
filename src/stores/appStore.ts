@@ -61,6 +61,29 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  // 清除游戏路径
+  clearGamePath: async () => {
+    try {
+      set({ isLoading: true, error: null });
+
+      await invoke('clear_game_path');
+
+      set({
+        gamePath: null,
+        plugins: [],
+        isLoading: false,
+      });
+    } catch (error) {
+      console.error('清除游戏路径失败:', error);
+      set({
+        error: error instanceof Error ? error.message : String(error),
+        isLoading: false,
+        gamePath: null,
+        plugins: [],
+      });
+    }
+  },
+
   // 加载插件列表
   loadPlugins: async () => {
     try {

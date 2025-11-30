@@ -281,6 +281,8 @@ export interface AppState {
   loadSettings: () => Promise<void>;
   /** 设置游戏路径 */
   setGamePath: (path: string) => Promise<void>;
+  /** 清除游戏路径（重新选择工作区） */
+  clearGamePath?: () => Promise<void>;
   /** 加载插件列表 */
   loadPlugins: () => Promise<void>;
   /** 设置错误信息 */

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -13,6 +13,12 @@ import {
 } from "@mui/material";
 import FolderOpenIcon from "@mui/icons-material/FolderOpen";
 import { useAppStore } from "../stores/appStore";
+import { WORKSPACE_STORAGE_KEY } from "../constants/storageKeys";
+
+interface StoredWorkspace {
+  path: string;
+  mode?: "directory" | "file";
+}
 
 /**
  * 游戏路径选择页面
@@ -26,45 +32,74 @@ export default function GamePathSelector() {
   const [error, setError] = useState<string | null>(null);
 
   // 处理路径选择（统一逻辑）
-  const handlePathSelection = async (
-    selectedPath: string,
-    mode: "directory" | "file",
-  ) => {
-    try {
-      setIsValidating(true);
-      setError(null);
+  const handlePathSelection = useCallback(
+    async (selectedPath: string, mode: "directory" | "file") => {
+      try {
+        setIsValidating(true);
+        setError(null);
 
-      // 验证路径是否有效
-      const isValid = await invoke<boolean>("validate_game_directory", {
-        path: selectedPath,
-      });
+        // 验证路径是否有效
+        const isValid = await invoke<boolean>("validate_game_directory", {
+          path: selectedPath,
+        });
 
-      if (!isValid) {
-        if (mode === "directory") {
-          setError(
-            "所选目录不是有效的 Skyrim 游戏目录。\n请确保目录下存在 Data/Skyrim.esm 文件。",
-          );
-        } else {
-          setError(
-            "所选文件不是有效的插件文件。\n请选择 .esp、.esm 或 .esl 文件。",
-          );
+        if (!isValid) {
+          if (mode === "directory") {
+            setError(
+              "所选目录不是有效的 Skyrim 游戏目录。\n请确保目录下存在 Data/Skyrim.esm 文件。",
+            );
+          } else {
+            setError(
+              "所选文件不是有效的插件文件。\n请选择 .esp、.esm 或 .esl 文件。",
+            );
+          }
+          setIsValidating(false);
+          return;
         }
+
+        // 保存路径
+        await setGamePath(selectedPath);
+
+        localStorage.setItem(
+          WORKSPACE_STORAGE_KEY,
+          JSON.stringify({ path: selectedPath, mode }),
+        );
+
+        // 跳转到主界面
+        navigate("/workspace");
+      } catch (err) {
+        console.error("路径选择失败:", err);
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
         setIsValidating(false);
+      }
+    },
+    [navigate, setGamePath],
+  );
+
+  const autoLoadAttemptedRef = useRef(false);
+
+  useEffect(() => {
+    if (autoLoadAttemptedRef.current) {
+      return;
+    }
+    const savedWorkspace = localStorage.getItem(WORKSPACE_STORAGE_KEY);
+    if (!savedWorkspace) {
+      return;
+    }
+    try {
+      const parsed = JSON.parse(savedWorkspace) as StoredWorkspace;
+      if (!parsed?.path) {
         return;
       }
-
-      // 保存路径
-      await setGamePath(selectedPath);
-
-      // 跳转到主界面
-      navigate("/workspace");
-    } catch (err) {
-      console.error("路径选择失败:", err);
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setIsValidating(false);
+      autoLoadAttemptedRef.current = true;
+      const mode = parsed.mode === "file" ? "file" : "directory";
+      void handlePathSelection(parsed.path, mode);
+    } catch (error) {
+      console.warn("自动加载工作区失败，已清除本地缓存:", error);
+      localStorage.removeItem(WORKSPACE_STORAGE_KEY);
     }
-  };
+  }, [handlePathSelection]);
 
   const handleSelectDirectory = async () => {
     try {

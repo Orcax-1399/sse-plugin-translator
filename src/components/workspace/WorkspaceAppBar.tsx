@@ -8,6 +8,7 @@ interface WorkspaceAppBarProps {
   gamePath: string | null;
   onOpenSettings: () => void;
   onOpenAtomicDb: () => void;
+  onResetWorkspace?: () => void;
 }
 
 /**
@@ -26,6 +27,7 @@ export default function WorkspaceAppBar({
   gamePath,
   onOpenSettings,
   onOpenAtomicDb,
+  onResetWorkspace,
 }: WorkspaceAppBarProps) {
   return (
     <AppBar
@@ -48,8 +50,26 @@ export default function WorkspaceAppBar({
           esp translator
         </Typography>
 
-        <Typography variant="body2" sx={{ mr: 2, opacity: 0.8 }}>
-          {gamePath}
+        <Typography
+          component="button"
+          type="button"
+          variant="body2"
+          sx={{
+            mr: 2,
+            opacity: gamePath ? 0.8 : 0.6,
+            cursor: gamePath ? "pointer" : "default",
+            background: "none",
+            border: "none",
+            color: "inherit",
+            font: "inherit",
+            textDecoration: gamePath ? "underline dotted" : "none",
+            p: 0,
+          }}
+          title={gamePath ? "点击重新选择工作区" : undefined}
+          onClick={gamePath ? onResetWorkspace : undefined}
+          tabIndex={gamePath ? 0 : -1}
+        >
+          {gamePath || "未选择工作区"}
         </Typography>
 
         <IconButton color="inherit" onClick={onOpenAtomicDb} title="原子数据库">
