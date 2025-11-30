@@ -8,12 +8,12 @@ import {
   Divider,
   Chip,
 } from "@mui/material";
-import { Save, SmartToy, Close } from "@mui/icons-material";
+import { Save, Close } from "@mui/icons-material";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { StringRecord, Translation } from "../types";
 import TranslationReferencePanel from "../components/TranslationReferencePanel";
-import { showSuccess, showError, showInfo } from "../stores/notificationStore";
+import { showSuccess, showError } from "../stores/notificationStore";
 import CodeMirror from "@uiw/react-codemirror";
 import { EditorView } from "@codemirror/view";
 import { bookDescExtensions, editorFontFamily } from "../utils/customSyntax";
@@ -147,11 +147,6 @@ export default function EditorWindow() {
       console.error("应用翻译失败:", error);
       showError("应用翻译失败: " + String(error));
     }
-  };
-
-  // AI 翻译占位符
-  const handleAITranslate = () => {
-    showInfo("AI 翻译功能开发中，敬请期待");
   };
 
   // 取消编辑
