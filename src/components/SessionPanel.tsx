@@ -12,11 +12,18 @@ import {
   Dialog,
   DialogTitle,
   DialogContent,
-  DialogContentText,
   DialogActions,
-  Alert,
   CircularProgress,
+  List,
+  ListItem,
+  ListItemIcon,
+  ListItemText,
+  styled,
 } from "@mui/material";
+import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
+import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
+import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
+import { motion, AnimatePresence } from "framer-motion";
 import type { GridPaginationModel } from "@mui/x-data-grid";
 import InfoIcon from "@mui/icons-material/Info";
 import SaveIcon from "@mui/icons-material/Save";
@@ -44,6 +51,54 @@ import {
   type CancellationToken,
   type AiStatusUpdate,
 } from "../utils/aiTranslation";
+
+// Thinking 动画组件（Claude/ChatGPT 风格 shimmer 效果）
+const ThinkingText = styled(Typography)(({ theme }) => ({
+  background: `linear-gradient(
+    90deg,
+    ${theme.palette.text.secondary} 0%,
+    ${theme.palette.text.secondary} 40%,
+    ${theme.palette.primary.main} 50%,
+    ${theme.palette.text.secondary} 60%,
+    ${theme.palette.text.secondary} 100%
+  )`,
+  backgroundSize: "200% 100%",
+  backgroundClip: "text",
+  WebkitBackgroundClip: "text",
+  WebkitTextFillColor: "transparent",
+  animation: "shimmer 2s infinite linear",
+  "@keyframes shimmer": {
+    "0%": { backgroundPosition: "100% 0" },
+    "100%": { backgroundPosition: "-100% 0" },
+  },
+}));
+
+// 状态消息堆叠动画配置（iOS 风格）
+const statusItemVariants = {
+  initial: {
+    opacity: 0,
+    scale: 0.8,
+    y: 20,
+  },
+  animate: {
+    opacity: 1,
+    scale: 1,
+    y: 0,
+    transition: {
+      type: "spring" as const,
+      stiffness: 500,
+      damping: 30,
+    },
+  },
+  exit: {
+    opacity: 0,
+    scale: 0.6,
+    y: -10,
+    transition: {
+      duration: 0.2,
+    },
+  },
+};
 
 interface SessionPanelProps {
   /** Session 数据 */
@@ -112,10 +167,17 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
   const [aiProgress, setAiProgress] = useState(0);
   const [aiCompleted, setAiCompleted] = useState(0);
   const [aiTotal, setAiTotal] = useState(0);
-  const [aiStatus, setAiStatus] = useState<AiStatusUpdate | null>(null);
+  const [, setAiStatus] = useState<AiStatusUpdate | null>(null);
+  const [statusHistory, setStatusHistory] = useState<AiStatusUpdate[]>([]);
+  const [currentIteration, setCurrentIteration] = useState(0);
+  const [isHeartbeatActive, setIsHeartbeatActive] = useState(false);
 
-  // 取消令牌（使用 useRef 避免重新创建）
+  // 取消令牌和心跳计时器（使用 useRef 避免重新创建）
   const cancellationTokenRef = useRef<CancellationToken | null>(null);
+  const lastStatusTimeRef = useRef<number>(Date.now());
+  const heartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
+    null,
+  );
 
   // Replace 对话框状态
   const [replaceDialogOpen, setReplaceDialogOpen] = useState(false);
@@ -169,6 +231,34 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [sessionData.session_id]); // 依赖 sessionId，确保切换 session 时重新绑定
+
+  // 心跳机制：超过 5 秒无新状态时显示 thinking 动画
+  useEffect(() => {
+    if (isAiTranslating) {
+      // 重置状态
+      lastStatusTimeRef.current = Date.now();
+      setIsHeartbeatActive(false);
+
+      // 每秒检查一次是否超时
+      heartbeatIntervalRef.current = setInterval(() => {
+        const now = Date.now();
+        const elapsed = now - lastStatusTimeRef.current;
+
+        if (elapsed > 5000) {
+          // 超过 5 秒无状态，激活心跳动画
+          setIsHeartbeatActive(true);
+        }
+      }, 1000);
+    }
+
+    return () => {
+      if (heartbeatIntervalRef.current) {
+        clearInterval(heartbeatIntervalRef.current);
+        heartbeatIntervalRef.current = null;
+      }
+      setIsHeartbeatActive(false);
+    };
+  }, [isAiTranslating]);
 
   // 是否正在加载翻译
   const isLoadingTranslations = progress !== undefined && progress < 100;
@@ -376,6 +466,10 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
     setAiProgress(0);
     setAiCompleted(0);
     setAiTotal(entries.length);
+    setStatusHistory([]); // 清空状态历史
+    setCurrentIteration(0); // 重置迭代计数
+    setAiStatus(null); // 清空当前状态
+    lastStatusTimeRef.current = Date.now(); // 重置心跳计时器
 
     // 创建取消令牌
     const cancellationToken = createCancellationToken();
@@ -427,7 +521,16 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
           }
         },
         cancellationToken, // 传递取消令牌
-        (status) => setAiStatus(status),
+        (status) => {
+          // 更新当前状态
+          setAiStatus(status);
+          // 追加到状态历史（保留最近 5 条）
+          setStatusHistory((prev) => [...prev.slice(-4), status]);
+          // 重置心跳计时器
+          lastStatusTimeRef.current = Date.now();
+          setIsHeartbeatActive(false);
+        },
+        (iteration) => setCurrentIteration(iteration), // 迭代回调
       );
 
       // 📝 翻译完成后，生成一个批量历史记录
@@ -477,7 +580,14 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
   // 取消AI翻译
   const handleCancelTranslation = () => {
     if (cancellationTokenRef.current) {
-      setAiStatus({ type: "info", message: "正在尝试取消翻译..." });
+      const cancelStatus: AiStatusUpdate = {
+        id: `cancel-${Date.now()}`,
+        type: "info",
+        message: "正在尝试取消翻译...",
+        timestamp: Date.now(),
+      };
+      setAiStatus(cancelStatus);
+      setStatusHistory((prev) => [...prev.slice(-4), cancelStatus]);
       cancellationTokenRef.current.cancel();
     }
   };
@@ -765,13 +875,38 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
       {/* AI翻译进度对话框 */}
       <Dialog open={isAiTranslating} disableEscapeKeyDown>
         <DialogTitle>AI翻译中...</DialogTitle>
-        <DialogContent sx={{ minWidth: 400 }}>
-          <DialogContentText>
-            正在使用 {currentApi?.name} 进行翻译，请稍候...
-          </DialogContentText>
-          <Box sx={{ mt: 2 }}>
+        <DialogContent sx={{ minWidth: 450 }}>
+          {/* 顶部状态条 - 基础版 */}
+          <Box
+            sx={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              mb: 2,
+              p: 1,
+              bgcolor: "action.hover",
+              borderRadius: 1,
+            }}
+          >
+            <Chip
+              label={currentApi?.name}
+              size="small"
+              color="primary"
+              variant="outlined"
+            />
+            <Typography variant="caption" color="text.secondary">
+              迭代 #{currentIteration}
+            </Typography>
+          </Box>
+
+          {/* 进度显示 */}
+          <Box sx={{ mb: 2 }}>
             <Box
-              sx={{ display: "flex", justifyContent: "space-between", mb: 1 }}
+              sx={{
+                display: "flex",
+                justifyContent: "space-between",
+                mb: 0.5,
+              }}
             >
               <Typography variant="body2" color="text.secondary">
                 进度: {aiCompleted} / {aiTotal}
@@ -780,12 +915,108 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
                 {aiProgress.toFixed(1)}%
               </Typography>
             </Box>
-            <LinearProgress variant="determinate" value={aiProgress} />
-            {aiStatus && (
-              <Alert severity={aiStatus.type} variant="outlined" sx={{ mt: 2 }}>
-                {aiStatus.message}
-              </Alert>
-            )}
+            <LinearProgress
+              variant="determinate"
+              value={aiProgress}
+              sx={{
+                "& .MuiLinearProgress-bar": {
+                  animation: isHeartbeatActive
+                    ? "pulse 1.5s ease-in-out infinite"
+                    : "none",
+                },
+                "@keyframes pulse": {
+                  "0%, 100%": { opacity: 1 },
+                  "50%": { opacity: 0.6 },
+                },
+              }}
+            />
+          </Box>
+
+          {/* 心跳 Thinking 动画 */}
+          {isHeartbeatActive && (
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 1,
+                py: 1,
+                mb: 1,
+              }}
+            >
+              <CircularProgress size={14} thickness={5} />
+              <ThinkingText variant="body2">
+                AI 正在思考中，请耐心等待...
+              </ThinkingText>
+            </Box>
+          )}
+
+          {/* 滚动状态列表 - 最近 5 条，带 iOS 风格堆叠动画 */}
+          <Box
+            sx={{
+              maxHeight: 200,
+              overflowY: "auto",
+              overflowX: "hidden",
+              border: 1,
+              borderColor: "divider",
+              borderRadius: 1,
+            }}
+          >
+            <List dense disablePadding>
+              <AnimatePresence mode="popLayout" initial={false}>
+                {statusHistory.map((status) => (
+                  <motion.div
+                    key={status.id}
+                    layout
+                    variants={statusItemVariants}
+                    initial="initial"
+                    animate="animate"
+                    exit="exit"
+                  >
+                    <ListItem
+                      sx={{
+                        py: 0.5,
+                        borderBottom: 1,
+                        borderColor: "divider",
+                        "&:last-child": { borderBottom: 0 },
+                      }}
+                    >
+                      <ListItemIcon sx={{ minWidth: 32 }}>
+                        {status.type === "error" ? (
+                          <ErrorOutlineIcon color="error" fontSize="small" />
+                        ) : status.type === "success" ? (
+                          <CheckCircleOutlineIcon
+                            color="success"
+                            fontSize="small"
+                          />
+                        ) : (
+                          <InfoOutlinedIcon color="info" fontSize="small" />
+                        )}
+                      </ListItemIcon>
+                      <ListItemText
+                        primary={status.message}
+                        primaryTypographyProps={{
+                          variant: "body2",
+                          noWrap: false,
+                          sx: { wordBreak: "break-word" },
+                        }}
+                      />
+                    </ListItem>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+              {statusHistory.length === 0 && !isHeartbeatActive && (
+                <ListItem>
+                  <ListItemText
+                    primary="等待 AI 响应..."
+                    primaryTypographyProps={{
+                      variant: "body2",
+                      color: "text.secondary",
+                      fontStyle: "italic",
+                    }}
+                  />
+                </ListItem>
+              )}
+            </List>
           </Box>
         </DialogContent>
         <DialogActions>

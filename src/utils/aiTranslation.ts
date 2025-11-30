@@ -89,8 +89,11 @@ export type ApplyCallback = (
 export type AiStatusType = "info" | "success" | "error";
 
 export interface AiStatusUpdate {
+  id: string;
   type: AiStatusType;
   message: string;
+  timestamp: number;
+  isHeartbeat?: boolean;
 }
 
 /**
@@ -118,6 +121,7 @@ export async function translateBatchWithAI(
   onApply: ApplyCallback,
   cancellationToken?: CancellationToken,
   onStatusChange?: (status: AiStatusUpdate) => void,
+  onIterationChange?: (iteration: number) => void,
 ): Promise<TranslationResult> {
   if (entries.length === 0) {
     return { success: true, translatedCount: 0 };
@@ -134,8 +138,19 @@ export async function translateBatchWithAI(
 
   // 初始化Session状态（在try外面声明，以便catch块访问）
   let sessionState: SessionState | null = null;
-  const emitStatus = (type: AiStatusType, message: string) => {
-    onStatusChange?.({ type, message });
+  let statusIdCounter = 0;
+  const emitStatus = (
+    type: AiStatusType,
+    message: string,
+    isHeartbeat = false,
+  ) => {
+    onStatusChange?.({
+      id: `status-${Date.now()}-${statusIdCounter++}`,
+      type,
+      message,
+      timestamp: Date.now(),
+      isHeartbeat,
+    });
   };
 
   try {
@@ -196,10 +211,15 @@ export async function translateBatchWithAI(
     };
 
     let maxIterations = 50; // 最大迭代次数，防止死循环
+    let currentIteration = 0;
 
     // 6. Session循环
     console.log(`[AI翻译] 开始翻译，共 ${totalCount} 条`);
     while (sessionState.csv.length > 0 && maxIterations > 0) {
+      // 更新迭代计数
+      currentIteration++;
+      onIterationChange?.(currentIteration);
+
       // 检查是否被取消
       if (cancellationToken?.isCancelled()) {
         console.log("[AI翻译] 用户取消翻译");
