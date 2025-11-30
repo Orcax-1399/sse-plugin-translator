@@ -31,8 +31,9 @@
 | 阶段25 | 历史记录和撤销功能 | ✅ | 2h |
 | 阶段26 | 搜索历史交互优化（Chip点击添加原子库） | ✅ | 1h |
 | 阶段27 | 原子库条目编辑功能 | ✅ | 0.5h |
+| 阶段28 | ESP 对照功能 | ✅ | 1.5h |
 
-**累计实际工时**: 67小时
+**累计实际工时**: 68.5小时
 
 ---
 
@@ -72,48 +73,61 @@
 - **搜索历史交互优化**（Chip点击快速添加原子库、Toast提示、自动删除记录）
 - **AI翻译 search 预算修复**（动态预算+缓存命中策略，解决 search 工具频繁耗尽导致翻译中断的问题）
 - **原子库条目编辑功能**（表格操作列编辑按钮、编辑对话框、修改译文和来源）
+- **ESP 对照功能**（从已翻译ESP导入翻译、替换未翻译/全部、支持撤销）
 
 ### 🚧 当前阶段
-**阶段27：原子库条目编辑功能** - ✅ 已完成
+**阶段28：ESP 对照功能** - ✅ 已完成
 
 #### 核心功能
-- **表格操作列**：每行新增编辑按钮（EditIcon），点击打开编辑对话框
-- **编辑对话框**：显示原文（只读）、可编辑译文、来源选择（Base/AI/Manual）
-- **后端更新接口**：`update_atom_translation(id, translated, source)` 根据ID更新
+- **ESP对照按钮**：SessionPanel工具栏新增"ESP对照"按钮
+- **文件选择**：通过@tauri-apps/plugin-dialog选择已翻译的ESP/ESM/ESL文件
+- **翻译导入**：提取参考文件中的英→中翻译映射
+- **替换策略**：支持"替换未翻译"和"替换全部"两种模式
+- **撤销支持**：导入操作记录到historyStore，可通过Ctrl+Z撤销
 
 #### 关键实现
 
 1. **后端（Rust）**
-   - `AtomicDB::update_atom(id, translated, source)` - 执行UPDATE语句
-   - `update_atom_translation` Tauri命令 - 前端调用入口
-   - 自动刷新内存索引和重建Aho-Corasick匹配器
+   - `esp_reference.rs` - 新增Tauri命令模块
+   - `load_esp_reference` - 加载参考ESP并提取翻译
+   - 通过`app.emit`发送`esp-reference-loaded`/`esp-reference-error`事件
 
 2. **前端（TypeScript/React）**
-   - `AtomDbTermsPanel.tsx` 新增编辑状态和对话框
-   - DataGrid列定义新增"操作"列
-   - `handleEditClick()` / `handleEditSubmit()` 处理函数
-   - 使用MUI Select组件选择来源类型
+   - `SessionPanel.tsx` - 新增ESP对照按钮和处理函数
+   - `EspReferenceListener.tsx` - 监听后端事件
+   - `EspReferenceModal.tsx` - 显示导入统计和替换选项
+   - `sessionStore.ts` - 新增`espReferenceLoading`状态
 
 3. **数据流向**
    ```
-   点击编辑按钮
+   点击"ESP对照"按钮
       ↓
-   打开对话框（填充当前值）
+   选择参考ESP文件
       ↓
-   修改译文/来源
+   invoke('load_esp_reference')
       ↓
-   invoke('update_atom_translation')
+   后端提取英文+中文版字符串
       ↓
-   后端UPDATE + 内存刷新
+   app.emit('esp-reference-loaded')
       ↓
-   loadAtoms() 刷新表格
+   EspReferenceListener接收事件
+      ↓
+   EspReferenceModal显示选项
+      ↓
+   用户选择替换策略
+      ↓
+   historyStore.pushCommand()
+      ↓
+   循环updateStringRecord(skipHistory)
+      ↓
+   pendingChanges更新，可保存/撤销
    ```
 
 #### 遵循原则
-- **KISS**：复用现有Dialog组件模式
-- **DRY**：复用showSnackbar/loadAtoms等函数
-- **YAGNI**：只实现单条编辑，暂不支持批量
-- **并发安全**：沿用Mutex锁机制
+- **KISS**：复用现有事件监听模式
+- **DRY**：复用updateStringRecord/historyStore
+- **YAGNI**：初版不实现进度条，只显示loading状态
+- **SOLID**：监听器和Modal职责分离
 
 ---
 

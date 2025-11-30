@@ -183,6 +183,8 @@ export interface SessionState {
   filterStatus?: Map<string, "all" | "untranslated" | "manual" | "ai">;
   /** 行选择状态 (Map: session_id -> Set<row_id>, row_id = "form_id|record_type|subrecord_type|index") */
   selectedRows?: Map<string, Set<string>>;
+  /** ESP 对照加载状态 (Map: session_id -> isLoading) */
+  espReferenceLoading?: Map<string, boolean>;
   /** 加载状态 */
   isLoading: boolean;
   /** 错误信息 */
@@ -252,9 +254,13 @@ export interface SessionState {
       translatedText: string;
       translationStatus?: string;
     }>,
+    /** 自定义历史记录描述（可选） */
+    customDescription?: string,
   ) => void;
   /** 撤销历史命令（恢复到修改前的状态） */
   revertCommand?: (command: any) => void;
+  /** 设置 ESP 对照加载状态 */
+  setEspReferenceLoading?: (sessionId: string, loading: boolean) => void;
 }
 
 /**

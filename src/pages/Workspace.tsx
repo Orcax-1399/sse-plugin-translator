@@ -7,6 +7,7 @@ import { useSessionStore } from "../stores/sessionStore";
 import { useApiConfigStore } from "../stores/apiConfigStore";
 import SettingsModal from "../components/SettingsModal";
 import TranslationUpdatedListener from "../components/workspace/TranslationUpdatedListener";
+import EspReferenceListener from "../components/workspace/EspReferenceListener";
 import WorkspaceAppBar from "../components/workspace/WorkspaceAppBar";
 import WorkspaceDrawer from "../components/workspace/WorkspaceDrawer";
 import SessionArea from "../components/workspace/SessionArea";
@@ -128,6 +129,9 @@ export default function Workspace() {
     <Box sx={{ display: "flex", height: "100vh", overflow: "hidden" }}>
       {/* 监听 translation-updated 事件 */}
       <TranslationUpdatedListener />
+
+      {/* 监听 esp-reference 事件 */}
+      <EspReferenceListener />
 
       {/* 顶部工具栏 */}
       <WorkspaceAppBar

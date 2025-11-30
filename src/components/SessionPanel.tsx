@@ -15,12 +15,16 @@ import {
   DialogContentText,
   DialogActions,
   Alert,
+  CircularProgress,
 } from "@mui/material";
 import type { GridPaginationModel } from "@mui/x-data-grid";
 import InfoIcon from "@mui/icons-material/Info";
 import SaveIcon from "@mui/icons-material/Save";
 import TranslateIcon from "@mui/icons-material/Translate";
 import UndoIcon from "@mui/icons-material/Undo";
+import CompareArrowsIcon from "@mui/icons-material/CompareArrows";
+import { open } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@tauri-apps/api/core";
 import type { PluginStringsResponse } from "../types";
 import StringTable from "./StringTable";
 import ReplaceDialog from "./workspace/ReplaceDialog";
@@ -72,6 +76,14 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
   );
   const batchUpdateStringRecords = useSessionStore(
     (state) => state.batchUpdateStringRecords,
+  );
+  const setEspReferenceLoading = useSessionStore(
+    (state) => state.setEspReferenceLoading,
+  );
+
+  // ✅ ESP 对照加载状态
+  const isLoadingReference = useSessionStore(
+    (state) => state.espReferenceLoading?.get(sessionData.session_id) || false,
   );
 
   // ✅ 使用selector订阅selectedRows的size，避免无限循环
@@ -502,6 +514,32 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
     }
   };
 
+  // 处理加载 ESP 对照
+  const handleLoadEspReference = async () => {
+    try {
+      const selected = await open({
+        filters: [{ name: "ESP Files", extensions: ["esp", "esm", "esl"] }],
+        multiple: false,
+      });
+
+      if (!selected) {
+        return; // 用户取消选择
+      }
+
+      // 设置加载状态
+      setEspReferenceLoading?.(sessionData.session_id, true);
+
+      // 调用后端命令（事件会在 EspReferenceListener 中处理）
+      await invoke("load_esp_reference", {
+        referencePath: selected,
+        sessionId: sessionData.session_id,
+      });
+    } catch (error) {
+      setEspReferenceLoading?.(sessionData.session_id, false);
+      showError(`加载 ESP 对照失败: ${error}`);
+    }
+  };
+
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
       {/* 状态栏（动态高度） */}
@@ -565,11 +603,32 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
             />
           </Box>
 
+          {/* 加载 ESP 对照按钮 */}
+          <Tooltip title="从已翻译的 ESP/ESM/ESL 文件导入翻译">
+            <span style={{ marginLeft: "auto" }}>
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={
+                  isLoadingReference ? (
+                    <CircularProgress size={16} />
+                  ) : (
+                    <CompareArrowsIcon />
+                  )
+                }
+                onClick={handleLoadEspReference}
+                disabled={isLoadingReference}
+              >
+                {isLoadingReference ? "加载中..." : "ESP对照"}
+              </Button>
+            </span>
+          </Tooltip>
+
           {/* 撤销按钮 */}
           <Badge
             badgeContent={undoCount}
             color="info"
-            sx={{ ml: "auto" }}
+            sx={{ ml: 1 }}
           >
             <Tooltip title={undoCount > 0 ? `撤销最近的操作 (Ctrl+Z)` : "没有可撤销的操作"}>
               <span>

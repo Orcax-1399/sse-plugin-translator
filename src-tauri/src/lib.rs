@@ -105,6 +105,8 @@ pub fn run() {
             commands::close_plugin_session,
             commands::list_plugin_sessions,
             commands::apply_translations,
+            // ESP 对照
+            commands::load_esp_reference,
             // ESP 提取
             commands::get_base_plugins_list,
             commands::extract_dictionary,

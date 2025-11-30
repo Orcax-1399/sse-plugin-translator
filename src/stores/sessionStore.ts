@@ -47,6 +47,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   filterStatus: new Map(),
   // ✅ 行选择状态（Map: session_id -> Set<row_id>，row_id = "form_id|record_type|subrecord_type|index"）
   selectedRows: new Map(),
+  // ✅ ESP 对照加载状态（Map: session_id -> isLoading）
+  espReferenceLoading: new Map(),
 
   /**
    * 打开插件 Session
@@ -145,6 +147,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         const newPendingChanges = new Map(state.pendingChanges);
         newPendingChanges.delete(sessionId);
 
+        // ✅ 清理 ESP 对照加载状态
+        const newEspReferenceLoading = new Map(state.espReferenceLoading);
+        newEspReferenceLoading.delete(sessionId);
+
         // 如果关闭的是当前激活的 Session，切换到其他 Session 或 null
         let newActiveSessionId = state.activeSessionId;
         if (newActiveSessionId === sessionId) {
@@ -167,6 +173,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           filterStatus: newFilterStatus,
           selectedRows: newSelectedRows,
           pendingChanges: newPendingChanges,
+          espReferenceLoading: newEspReferenceLoading,
           activeSessionId: newActiveSessionId,
           isLoading: false,
         };
@@ -764,6 +771,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       translatedText: string;
       translationStatus?: string;
     }>,
+    /** 自定义历史记录描述（可选，默认 "Replace N items"） */
+    customDescription?: string,
   ) => {
     const { openedSessions } = get();
     const session = openedSessions.get(sessionId);
@@ -859,7 +868,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       id: `${Date.now()}-${Math.random().toString(36).substring(7)}`,
       timestamp: Date.now(),
       type: "batch",
-      description: `Replace ${updates.length} items`,
+      description: customDescription || `Replace ${updates.length} items`,
       sessionId,
       records: historyRecords,
     };
@@ -955,5 +964,23 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     console.log(
       `↶ 撤销完成: ${command.description} (${command.records.length} 条记录)`,
     );
+  },
+
+  /**
+   * 设置 ESP 对照加载状态
+   *
+   * @param sessionId - Session ID
+   * @param loading - 是否正在加载
+   */
+  setEspReferenceLoading: (sessionId: string, loading: boolean) => {
+    set((state) => {
+      const newLoading = new Map(state.espReferenceLoading);
+      if (loading) {
+        newLoading.set(sessionId, true);
+      } else {
+        newLoading.delete(sessionId);
+      }
+      return { espReferenceLoading: newLoading };
+    });
   },
 }));
