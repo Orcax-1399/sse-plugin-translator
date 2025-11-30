@@ -134,9 +134,9 @@ export default function SearchHistoryPanel() {
           columns={columns}
           loading={loading}
           density="compact"
-          pageSizeOptions={[25, 50, 100]}
+          pageSizeOptions={[50, 100, 300]}
           initialState={{
-            pagination: { paginationModel: { pageSize: 50 } },
+            pagination: { paginationModel: { pageSize: 100 } },
             sorting: {
               sortModel: [{ field: 'updated_at', sort: 'desc' }],
             },

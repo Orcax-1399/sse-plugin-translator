@@ -122,7 +122,7 @@ const StringTable = memo(function StringTable({ rows, sessionId, paginationModel
         getRowId={(row) => `${row.form_id}|${row.record_type}|${row.subrecord_type}|${row.index}`} // ✅ 使用复合key作为唯一标识
         paginationModel={paginationModel}
         onPaginationModelChange={onPaginationModelChange}
-        pageSizeOptions={[25, 50, 100]}
+        pageSizeOptions={[50, 100, 300]}
         checkboxSelection // ✅ 启用复选框选择
         rowSelectionModel={selectedRowIds} // ✅ 当前选中的行
         onRowSelectionModelChange={handleRowSelectionChange} // ✅ 处理选择变化

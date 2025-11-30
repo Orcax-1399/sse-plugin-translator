@@ -167,10 +167,10 @@ export default function CoverageSearchPanel() {
           columns={columns}
           getRowId={getRowId}
           loading={isSearching}
-          pageSizeOptions={[25, 50, 100]}
+          pageSizeOptions={[50, 100, 300]}
           initialState={{
             pagination: {
-              paginationModel: { pageSize: 25 },
+              paginationModel: { pageSize: 100 },
             },
           }}
           disableRowSelectionOnClick

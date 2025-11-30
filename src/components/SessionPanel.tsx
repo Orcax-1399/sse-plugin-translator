@@ -199,7 +199,7 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
   const [isSaving, setIsSaving] = useState(false);
   const [paginationModel, setPaginationModel] = useState<GridPaginationModel>({
     page: 0,
-    pageSize: 50,
+    pageSize: 100,
   });
 
   // AI翻译状态
@@ -1041,6 +1041,9 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
               border: 1,
               borderColor: "divider",
               borderRadius: 1,
+              "&::-webkit-scrollbar": { display: "none" },
+              MsOverflowStyle: "none",
+              scrollbarWidth: "none",
             }}
           >
             <List dense disablePadding>

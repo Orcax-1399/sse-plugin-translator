@@ -290,10 +290,10 @@ export default function AtomDbTermsPanel() {
           checkboxSelection
           disableRowSelectionOnClick
           density="compact"
-          pageSizeOptions={[25, 50, 100]}
+          pageSizeOptions={[50, 100, 300]}
           rowSelectionModel={selectedRowsModel}
           initialState={{
-            pagination: { paginationModel: { pageSize: 50 } },
+            pagination: { paginationModel: { pageSize: 100 } },
             sorting: {
               sortModel: [{ field: 'usage_count', sort: 'desc' }],
             },
