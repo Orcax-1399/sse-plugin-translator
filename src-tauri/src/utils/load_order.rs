@@ -49,6 +49,10 @@ pub fn extract_and_store<F>(
 where
     F: FnMut(CoverageProgressUpdate),
 {
+    coverage_db
+        .clear_entries()
+        .map_err(|e| format!("清空覆盖数据库失败: {}", e))?;
+
     let mut stats = CoverageExtractionStats::new(plugins.len());
     let snapshot_ts = now_ts();
     let total_plugins = plugins.len();

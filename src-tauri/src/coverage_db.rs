@@ -150,6 +150,13 @@ impl CoverageDB {
         Ok(())
     }
 
+    /// 清空覆盖记录表，确保刷新前状态干净
+    pub fn clear_entries(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM coverage_entries", [])?;
+        Ok(())
+    }
+
     /// 用新的快照替换 load order 表
     pub fn replace_load_order_snapshot(&self, entries: &[LoadOrderEntry]) -> Result<()> {
         let conn = self.conn.lock().unwrap();
