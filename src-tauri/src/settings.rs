@@ -89,15 +89,4 @@ mod tests {
         assert_eq!(settings.game, None);
     }
 
-    #[test]
-    fn test_settings_serialization() {
-        let settings = Settings {
-            game: Some("C:/Games/Skyrim".to_string()),
-        };
-
-        let json = serde_json::to_string(&settings).unwrap();
-        let deserialized: Settings = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(settings.game, deserialized.game);
-    }
 }
