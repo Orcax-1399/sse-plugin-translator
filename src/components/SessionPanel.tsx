@@ -226,6 +226,17 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
     pageSize: 100,
   });
 
+  const handlePaginationModelChange = useCallback(
+    (model: GridPaginationModel) => {
+      setPaginationModel((prev) =>
+        prev.page === model.page && prev.pageSize === model.pageSize
+          ? prev
+          : { ...model },
+      );
+    },
+    [],
+  );
+
   // AI翻译状态
   const [isAiTranslating, setIsAiTranslating] = useState(false);
   const [aiProgress, setAiProgress] = useState(0);
@@ -1036,7 +1047,7 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
           rows={filteredStrings}
           sessionId={sessionData.session_id}
           paginationModel={paginationModel}
-          onPaginationModelChange={setPaginationModel}
+          onPaginationModelChange={handlePaginationModelChange}
         />
       </Box>
 

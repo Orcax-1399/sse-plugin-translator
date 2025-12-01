@@ -1,7 +1,7 @@
 {
   "name": "sse-plugin-translator",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.7.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -19,7 +19,8 @@
     "@lezer/highlight": "^1.2.3",
     "@mui/icons-material": "^7.3.5",
     "@mui/material": "^7.3.5",
-    "@mui/x-data-grid": "^8.18.0",
+    "@mui/x-date-pickers": "^8.19.0",
+    "@tanstack/react-table": "^8.21.3",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.4.2",
     "@tauri-apps/plugin-opener": "^2",
@@ -27,6 +28,7 @@
     "ai": "^5.0.93",
     "framer-motion": "^12.23.24",
     "immer": "^10.2.0",
+    "material-react-table": "^3.2.1",
     "openai": "^6.9.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

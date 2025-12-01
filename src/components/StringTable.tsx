@@ -1,10 +1,12 @@
-import { useMemo, memo } from 'react';
-import { DataGrid, GridColDef, GridRowParams, GridRowSelectionModel, GridPaginationModel } from '@mui/x-data-grid';
+import { useMemo, memo, useCallback } from 'react';
+import { MaterialReactTable, type MRT_ColumnDef } from 'material-react-table';
+import type { PaginationState, RowSelectionState, Updater } from '@tanstack/react-table';
 import { Box } from '@mui/material';
 import { invoke } from '@tauri-apps/api/core';
 import type { StringRecord } from '../types';
 import { showError } from '../stores/notificationStore';
 import { useSessionStore } from '../stores/sessionStore';
+import type { GridPaginationModel } from '@mui/x-data-grid';
 
 interface StringTableProps {
   /** 字符串记录列表 */
@@ -30,72 +32,125 @@ const StringTable = memo(function StringTable({ rows, sessionId, paginationModel
   const selectedRows = useSessionStore((state) => state.selectedRows);
   const setSelectedRows = useSessionStore((state) => state.setSelectedRows);
 
-  // 获取当前session的选中行
-  // rowId格式："form_id|record_type|subrecord_type|index"
-  const selectedRowIds: GridRowSelectionModel = useMemo(() => {
+  // 获取当前 session 的选中行
+  const selectedSet = useMemo(() => {
     if (!sessionId || !selectedRows) {
-      return { type: 'include', ids: new Set() };
+      return new Set<string>();
     }
-    const selectedSet = selectedRows.get(sessionId) || new Set<string>();
-    return { type: 'include', ids: selectedSet };
+    return selectedRows.get(sessionId) || new Set<string>();
   }, [sessionId, selectedRows]);
 
-  // 处理行选择变化
-  // 将选中的rowId（"form_id|record_type|subrecord_type|index"）存储到session state
-  const handleRowSelectionChange = (newSelection: GridRowSelectionModel) => {
-    if (!sessionId || !setSelectedRows) return;
+  // Material React Table 的受控 rowSelection 状态
+  const rowSelectionState: RowSelectionState = useMemo(() => {
+    const state: RowSelectionState = {};
+    selectedSet.forEach((id) => {
+      state[id] = true;
+    });
+    return state;
+  }, [selectedSet]);
 
-    // GridRowSelectionModel 在v8中是 { type, ids } 结构
-    const selectedSet = new Set<string>();
-    newSelection.ids.forEach(id => selectedSet.add(String(id)));
-    setSelectedRows(sessionId, selectedSet);
-  };
+  const handleRowSelectionChange = useCallback(
+    (updater: Updater<RowSelectionState>) => {
+      if (!sessionId || !setSelectedRows) return;
+
+      const nextState = typeof updater === 'function' ? updater(rowSelectionState) : updater;
+      const nextSet = new Set<string>();
+      Object.entries(nextState).forEach(([key, selected]) => {
+        if (selected) {
+          nextSet.add(key);
+        }
+      });
+      setSelectedRows(sessionId, nextSet);
+    },
+    [rowSelectionState, sessionId, setSelectedRows],
+  );
 
   // 定义列（按需求顺序）
-  const columns: GridColDef[] = [
-    {
-      field: 'form_id_short',
-      headerName: 'Form ID',
-      width: 120,
-      valueGetter: (_value, row) => {
-        // 前端处理：仅显示 | 左侧部分
-        return row.form_id.split('|')[0];
+  const columns: MRT_ColumnDef<StringRecord>[] = useMemo(
+    () => [
+      {
+        header: 'Form ID',
+        accessorFn: (row) => row.form_id.split('|')[0],
+        id: 'form_id_short',
+        size: 120,
       },
-    },
-    {
-      field: 'editor_id',
-      headerName: 'Editor ID',
-      width: 150,
-      valueGetter: (_value, row) => row.editor_id || '(无)',
-    },
-    {
-      field: 'type',
-      headerName: 'Type',
-      width: 150,
-      valueGetter: (_value, row) => {
-        // 组合 record_type + subrecord_type
-        return `${row.record_type} ${row.subrecord_type}`;
+      {
+        header: 'Editor ID',
+        accessorKey: 'editor_id',
+        Cell: ({ row }) => row.original.editor_id || '(无)',
+        size: 150,
       },
-    },
-    {
-      field: 'original_text',
-      headerName: 'Original Text',
-      flex: 1, // 自适应宽度
-      minWidth: 200,
-    },
-    {
-      field: 'translated_text',
-      headerName: 'Translated Text',
-      flex: 1, // 自适应宽度
-      minWidth: 200,
-    },
-  ];
+      {
+        header: 'Type',
+        accessorFn: (row) => `${row.record_type} ${row.subrecord_type}`,
+        id: 'type',
+        size: 150,
+      },
+      {
+        header: 'Original Text',
+        accessorKey: 'original_text',
+        size: 200,
+        grow: 1,
+      },
+      {
+        header: 'Translated Text',
+        accessorKey: 'translated_text',
+        size: 200,
+        grow: 1,
+      },
+    ],
+    [],
+  );
 
+  const paginationState = useMemo<PaginationState>(
+    () => ({
+      pageIndex: paginationModel.page,
+      pageSize: paginationModel.pageSize,
+    }),
+    [paginationModel],
+  );
+
+  const handlePaginationChange = useCallback(
+    (updater: Updater<PaginationState>) => {
+      const nextState = typeof updater === 'function' ? updater(paginationState) : updater;
+      onPaginationModelChange({
+        page: nextState.pageIndex,
+        pageSize: nextState.pageSize,
+      });
+    },
+    [paginationState, onPaginationModelChange],
+  );
+
+  const getRowStyle = useCallback((row: StringRecord) => {
+    switch (row.translation_status) {
+      case 'untranslated':
+        return {
+          backgroundColor: '#ffebee',
+          '&:hover': {
+            backgroundColor: '#ffcdd2',
+          },
+        };
+      case 'manual':
+        return {
+          backgroundColor: '#e3f2fd',
+          '&:hover': {
+            backgroundColor: '#bbdefb',
+          },
+        };
+      case 'ai':
+        return {
+          backgroundColor: '#e8f5e9',
+          '&:hover': {
+            backgroundColor: '#c8e6c9',
+          },
+        };
+      default:
+        return {};
+    }
+  }, []);
 
   // 双击行打开编辑窗口
-  const handleRowDoubleClick = (params: GridRowParams) => {
-    const record = params.row as StringRecord;
-
+  const handleRowDoubleClick = useCallback((record: StringRecord) => {
     console.log('→ 双击行，准备打开编辑窗口');
 
     // ✅ Fire-and-forget: 不等待也不处理结果
@@ -106,7 +161,7 @@ const StringTable = memo(function StringTable({ rows, sessionId, paginationModel
     });
 
     console.log('→ 调用已发出，不等待返回');
-  };
+  }, []);
 
   return (
     <Box
@@ -115,58 +170,57 @@ const StringTable = memo(function StringTable({ rows, sessionId, paginationModel
         width: '100%',
       }}
     >
-      <DataGrid
-        key={sessionId} // ✅ 强制在 session 切换时重新挂载，确保旧缓存释放
-        rows={rows}
+      <MaterialReactTable
+        key={sessionId}
         columns={columns}
-        getRowId={(row) => `${row.form_id}|${row.record_type}|${row.subrecord_type}|${row.index}`} // ✅ 使用复合key作为唯一标识
-        paginationModel={paginationModel}
-        onPaginationModelChange={onPaginationModelChange}
-        pageSizeOptions={[50, 100, 300]}
-        checkboxSelection // ✅ 启用复选框选择
-        rowSelectionModel={selectedRowIds} // ✅ 当前选中的行
-        onRowSelectionModelChange={handleRowSelectionChange} // ✅ 处理选择变化
-        disableRowSelectionOnClick
-        onRowDoubleClick={handleRowDoubleClick}
-        getRowClassName={(params) => {
-          const row = params.row as StringRecord;
-          switch (row.translation_status) {
-            case 'untranslated':
-              return 'row-untranslated';
-            case 'manual':
-              return 'row-manual';
-            case 'ai':
-              return 'row-ai';
-            default:
-              return '';
-          }
+        data={rows}
+        enableColumnResizing
+        enableRowSelection
+        enableMultiRowSelection
+        enableTopToolbar={false}
+        muiTablePaperProps={{
+          sx: {
+            height: '100%',
+            display: 'flex',
+            flexDirection: 'column',
+          },
         }}
-        sx={{
-          border: 0,
-          width: '100%',
-          '& .MuiDataGrid-cell': {
+        muiTableContainerProps={{
+          sx: {
+            flex: 1,
+          },
+        }}
+        muiTableBodyCellProps={{
+          sx: {
             borderBottom: '1px solid #e0e0e0',
-          },
-          // 行颜色样式
-          '& .row-untranslated': {
-            backgroundColor: '#ffebee !important', // 淡红色（未翻译）
-            '&:hover': {
-              backgroundColor: '#ffcdd2 !important',
-            },
-          },
-          '& .row-manual': {
-            backgroundColor: '#e3f2fd !important', // 淡蓝色（已翻译）
-            '&:hover': {
-              backgroundColor: '#bbdefb !important',
-            },
-          },
-          '& .row-ai': {
-            backgroundColor: '#e8f5e9 !important', // 淡绿色（AI翻译，预留）
-            '&:hover': {
-              backgroundColor: '#c8e6c9 !important',
-            },
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            maxWidth: '100%',
           },
         }}
+        muiTableBodyRowProps={({ row }) => ({
+          onDoubleClick: () => handleRowDoubleClick(row.original as StringRecord),
+          sx: {
+            cursor: 'pointer',
+            ...getRowStyle(row.original as StringRecord),
+          },
+        })}
+        getRowId={(row) => `${row.form_id}|${row.record_type}|${row.subrecord_type}|${row.index}`}
+        muiPaginationProps={{
+          rowsPerPageOptions: [50, 100, 300, 500, 1000],
+        }}
+        state={{
+          rowSelection: rowSelectionState,
+          pagination: paginationState,
+        }}
+        onRowSelectionChange={handleRowSelectionChange}
+        onPaginationChange={handlePaginationChange}
+        muiTableHeadCellProps={{
+          sx: { fontWeight: 600 },
+        }}
+        positionPagination="bottom"
+        layoutMode="grid"
       />
     </Box>
   );

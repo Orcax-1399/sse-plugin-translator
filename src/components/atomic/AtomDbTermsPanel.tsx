@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   Stack,
   Button,
@@ -18,7 +18,8 @@ import {
   Select,
   MenuItem,
 } from '@mui/material';
-import { DataGrid, GridColDef, GridRowsProp, GridRowSelectionModel } from '@mui/x-data-grid';
+import { MaterialReactTable, type MRT_ColumnDef } from 'material-react-table';
+import type { RowSelectionState } from '@tanstack/react-table';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
@@ -40,11 +41,7 @@ export default function AtomDbTermsPanel() {
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [newOriginal, setNewOriginal] = useState('');
   const [newTranslated, setNewTranslated] = useState('');
-  // ✅ 使用GridRowSelectionModel v8格式
-  const [selectedRowsModel, setSelectedRowsModel] = useState<GridRowSelectionModel>({
-    type: 'include',
-    ids: new Set(),
-  });
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
     open: false,
     message: '',
@@ -55,6 +52,13 @@ export default function AtomDbTermsPanel() {
   const [editingAtom, setEditingAtom] = useState<AtomTranslation | null>(null);
   const [editTranslated, setEditTranslated] = useState('');
   const [editSource, setEditSource] = useState<AtomTranslation['source']>('Manual');
+  const selectedIds = useMemo(() => {
+    return Object.entries(rowSelection)
+      .filter(([, selected]) => selected)
+      .map(([id]) => Number(id))
+      .filter((value) => Number.isFinite(value));
+  }, [rowSelection]);
+  const selectedCount = selectedIds.length;
 
   // 加载原子数据
   const loadAtoms = async () => {
@@ -109,14 +113,14 @@ export default function AtomDbTermsPanel() {
 
   // 删除选中的原子翻译
   const handleDeleteSelected = async () => {
-    if (selectedRowsModel.ids.size === 0) {
+    if (selectedCount === 0) {
       showSnackbar('请先选择要删除的条目', 'error');
       return;
     }
 
     try {
       // 批量删除
-      for (const id of selectedRowsModel.ids) {
+      for (const id of selectedIds) {
         const atom = atoms.find((a) => a.id === Number(id));
         if (atom) {
           await invoke('delete_atom_translation', {
@@ -125,8 +129,8 @@ export default function AtomDbTermsPanel() {
         }
       }
 
-      showSnackbar(`成功删除 ${selectedRowsModel.ids.size} 条记录`, 'success');
-      setSelectedRowsModel({ type: 'include', ids: new Set() });
+      showSnackbar(`成功删除 ${selectedCount} 条记录`, 'success');
+      setRowSelection({});
       loadAtoms(); // 重新加载数据
     } catch (error) {
       showSnackbar('删除失败: ' + String(error), 'error');
@@ -186,55 +190,57 @@ export default function AtomDbTermsPanel() {
   };
 
   // 定义表格列
-  const columns: GridColDef[] = [
+  const columns: MRT_ColumnDef<AtomTranslation>[] = [
     {
-      field: 'original',
-      headerName: '原文',
-      flex: 2,
-      minWidth: 200,
+      header: '原文',
+      accessorKey: 'original',
+      size: 200,
+      grow: 1,
     },
     {
-      field: 'translated',
-      headerName: '译文',
-      flex: 2,
-      minWidth: 200,
+      header: '译文',
+      accessorKey: 'translated',
+      size: 200,
+      grow: 1,
     },
     {
-      field: 'usage_count',
-      headerName: '使用次数',
-      width: 120,
-      type: 'number',
+      header: '使用次数',
+      accessorKey: 'usage_count',
+      size: 120,
     },
     {
-      field: 'source',
-      headerName: '来源',
-      width: 100,
-      renderCell: (params) => (
-        <Chip
-          label={getSourceLabel(params.value)}
-          color={getSourceColor(params.value)}
-          size="small"
-        />
-      ),
+      header: '来源',
+      accessorKey: 'source',
+      size: 100,
+      Cell: ({ cell }) => {
+        const source = cell.getValue<AtomTranslation['source']>();
+        return (
+          <Chip
+            label={getSourceLabel(source)}
+            color={getSourceColor(source)}
+            size="small"
+          />
+        );
+      },
     },
     {
-      field: 'created_at',
-      headerName: '创建时间',
-      width: 180,
-      valueFormatter: (value) => new Date(value * 1000).toLocaleString('zh-CN'),
+      header: '创建时间',
+      accessorKey: 'created_at',
+      size: 180,
+      Cell: ({ cell }) =>
+        new Date(cell.getValue<number>() * 1000).toLocaleString('zh-CN'),
     },
     {
-      field: 'actions',
-      headerName: '操作',
-      width: 80,
-      sortable: false,
-      filterable: false,
-      renderCell: (params) => (
+      header: '操作',
+      size: 80,
+      enableSorting: false,
+      enableColumnActions: false,
+      Cell: ({ row }) => (
         <IconButton
           size="small"
           onClick={(e) => {
-            e.stopPropagation(); // 阻止行选择
-            handleEditClick(params.row as AtomTranslation);
+            e.stopPropagation();
+            handleEditClick(row.original as AtomTranslation);
           }}
           title="编辑"
         >
@@ -243,16 +249,6 @@ export default function AtomDbTermsPanel() {
       ),
     },
   ];
-
-  // 转换为 DataGrid 所需的行数据
-  const rows: GridRowsProp = atoms.map((atom) => ({
-    id: atom.id,
-    original: atom.original,
-    translated: atom.translated,
-    usage_count: atom.usage_count,
-    source: atom.source,
-    created_at: atom.created_at,
-  }));
 
   return (
     <Stack spacing={2} sx={{ height: '100%' }}>
@@ -275,40 +271,61 @@ export default function AtomDbTermsPanel() {
           color="error"
           startIcon={<DeleteIcon />}
           onClick={handleDeleteSelected}
-          disabled={selectedRowsModel.ids.size === 0}
+          disabled={selectedCount === 0}
         >
-          删除选中 ({selectedRowsModel.ids.size})
+          删除选中 ({selectedCount})
         </Button>
       </Box>
 
-      {/* DataGrid */}
+      {/* 术语表格 */}
       <Box sx={{ flex: 1, minHeight: 0 }}>
-        <DataGrid
-          rows={rows}
+        <MaterialReactTable
           columns={columns}
-          loading={loading}
-          checkboxSelection
-          disableRowSelectionOnClick
-          density="compact"
-          pageSizeOptions={[50, 100, 300]}
-          rowSelectionModel={selectedRowsModel}
+          data={atoms}
+          enableRowSelection
+          enableMultiRowSelection
+          enableTopToolbar={false}
+          getRowId={(row, index) =>
+            row?.id !== undefined && row?.id !== null
+              ? row.id.toString()
+              : `row-${index}`
+          }
           initialState={{
-            pagination: { paginationModel: { pageSize: 100 } },
-            sorting: {
-              sortModel: [{ field: 'usage_count', sort: 'desc' }],
-            },
+            pagination: { pageIndex: 0, pageSize: 100 },
+            sorting: [{ id: 'usage_count', desc: true }],
           }}
-          onRowSelectionModelChange={(newSelection) => {
-            setSelectedRowsModel(newSelection);
+          muiTablePaperProps={{
+            elevation: 0,
+            sx: { height: '100%', display: 'flex', flexDirection: 'column' },
           }}
-          sx={{
-            '& .MuiDataGrid-cell:focus': {
-              outline: 'none',
-            },
-            '& .MuiDataGrid-row:hover': {
+          muiTableContainerProps={{ sx: { flex: 1 } }}
+          muiTableBodyRowProps={{
+            sx: {
               cursor: 'pointer',
             },
           }}
+          muiTableBodyCellProps={{
+            sx: {
+              '&:focus': {
+                outline: 'none',
+              },
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              maxWidth: '100%',
+            },
+          }}
+          muiPaginationProps={{
+            rowsPerPageOptions: [50, 100, 300],
+          }}
+          layoutMode="grid"
+          positionPagination="bottom"
+          state={{
+            rowSelection,
+            isLoading: loading,
+            showProgressBars: loading,
+          }}
+          onRowSelectionChange={setRowSelection}
         />
       </Box>
 

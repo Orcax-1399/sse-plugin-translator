@@ -9,51 +9,10 @@ import {
 } from "@mui/material";
 import SearchIcon from "@mui/icons-material/Search";
 import ClearIcon from "@mui/icons-material/Clear";
-import { DataGrid, type GridColDef } from "@mui/x-data-grid";
+import { MaterialReactTable, type MRT_ColumnDef } from "material-react-table";
 import { useCoverageStore } from "../../stores/coverageStore";
 import type { CoverageEntry } from "../../types";
-
-// DataGrid 列定义
-const columns: GridColDef<CoverageEntry>[] = [
-  {
-    field: "form_id",
-    headerName: "Form ID",
-    width: 180,
-    sortable: true,
-  },
-  {
-    field: "record_type",
-    headerName: "记录类型",
-    width: 100,
-    sortable: true,
-  },
-  {
-    field: "subrecord_type",
-    headerName: "子类型",
-    width: 100,
-    sortable: true,
-  },
-  {
-    field: "text",
-    headerName: "文本内容",
-    flex: 1,
-    minWidth: 200,
-    sortable: false,
-  },
-  {
-    field: "source_mod",
-    headerName: "来源MOD",
-    width: 180,
-    sortable: true,
-  },
-  {
-    field: "load_order_pos",
-    headerName: "加载顺序",
-    width: 90,
-    type: "number",
-    sortable: true,
-  },
-];
+import { useMemo } from "react";
 
 /**
  * 覆盖记录搜索面板
@@ -70,6 +29,41 @@ export default function CoverageSearchPanel() {
 
   const [formIdQuery, setFormIdQuery] = useState("");
   const [textQuery, setTextQuery] = useState("");
+
+  const columns = useMemo<MRT_ColumnDef<CoverageEntry>[]>(() => [
+    {
+      header: "Form ID",
+      accessorKey: "form_id",
+      size: 180,
+    },
+    {
+      header: "记录类型",
+      accessorKey: "record_type",
+      size: 100,
+    },
+    {
+      header: "子类型",
+      accessorKey: "subrecord_type",
+      size: 100,
+    },
+    {
+      header: "文本内容",
+      accessorKey: "text",
+      grow: 1,
+      size: 200,
+      enableSorting: false,
+    },
+    {
+      header: "来源MOD",
+      accessorKey: "source_mod",
+      size: 180,
+    },
+    {
+      header: "加载顺序",
+      accessorKey: "load_order_pos",
+      size: 90,
+    },
+  ], []);
 
   // 执行搜索
   const handleSearch = useCallback(async () => {
@@ -162,26 +156,45 @@ export default function CoverageSearchPanel() {
 
       {/* 结果表格 */}
       <Box sx={{ flex: 1, minHeight: 400 }}>
-        <DataGrid
-          rows={searchResults}
+        <MaterialReactTable
           columns={columns}
+          data={searchResults}
           getRowId={getRowId}
-          loading={isSearching}
-          pageSizeOptions={[50, 100, 300]}
+          enableTopToolbar={false}
+          enableColumnFilters={false}
+          enableRowSelection={false}
           initialState={{
-            pagination: {
-              paginationModel: { pageSize: 100 },
-            },
+            pagination: { pageIndex: 0, pageSize: 100 },
           }}
-          disableRowSelectionOnClick
-          sx={{
-            "& .MuiDataGrid-cell": {
+          muiTablePaperProps={{
+            elevation: 0,
+            sx: { height: "100%", display: "flex", flexDirection: "column" },
+          }}
+          muiTableContainerProps={{ sx: { flex: 1 } }}
+          muiTableBodyCellProps={{
+            sx: {
               fontSize: "0.875rem",
+              borderBottom: "1px solid #e0e0e0",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              maxWidth: "100%",
             },
           }}
-          localeText={{
-            noRowsLabel: "无搜索结果",
+          muiPaginationProps={{
+            rowsPerPageOptions: [50, 100, 300],
           }}
+          state={{
+            isLoading: isSearching,
+            showProgressBars: isSearching,
+          }}
+          renderBottomToolbarCustomActions={() =>
+            searchResults.length === 0 ? (
+              <Typography variant="body2" color="text.secondary">
+                无搜索结果
+              </Typography>
+            ) : null
+          }
         />
       </Box>
     </Box>

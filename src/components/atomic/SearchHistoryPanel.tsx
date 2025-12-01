@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { DataGrid, GridColDef } from '@mui/x-data-grid';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { MaterialReactTable, type MRT_ColumnDef } from 'material-react-table';
 import { invoke } from '@tauri-apps/api/core';
 import { Box, Typography, Chip, Alert, Snackbar } from '@mui/material';
 
@@ -9,6 +9,8 @@ interface SearchHistoryEntry {
   updated_at: number;
 }
 
+type HistoryRow = SearchHistoryEntry & { id: number };
+
 export default function SearchHistoryPanel() {
   const [history, setHistory] = useState<SearchHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -17,7 +19,7 @@ export default function SearchHistoryPanel() {
   const [toastMessage, setToastMessage] = useState('');
   const [toastSeverity, setToastSeverity] = useState<'success' | 'error'>('success');
 
-  const loadHistory = async () => {
+  const loadHistory = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -29,13 +31,13 @@ export default function SearchHistoryPanel() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadHistory();
-  }, []);
+  }, [loadHistory]);
 
-  const handleChipClick = async (term: string, candidate: string) => {
+  const handleChipClick = useCallback(async (term: string, candidate: string) => {
     try {
       // 1. 添加到原子数据库
       await invoke('add_atom_translation', {
@@ -60,27 +62,26 @@ export default function SearchHistoryPanel() {
       setToastSeverity('error');
       setToastOpen(true);
     }
-  };
+  }, [loadHistory]);
 
-  const columns: GridColDef[] = [
+  const columns = useMemo<MRT_ColumnDef<HistoryRow>[]>(() => [
     {
-      field: 'term',
-      headerName: '查询术语',
-      flex: 1,
-      minWidth: 150,
+      header: '查询术语',
+      accessorKey: 'term',
+      size: 150,
+      grow: 1,
     },
     {
-      field: 'candidates',
-      headerName: '候选译文',
-      flex: 2,
-      minWidth: 300,
-      renderCell: (params) => {
-        const term = params.row.term as string;
-        const candidates = params.value as string[];
-
+      header: '候选译文',
+      accessorKey: 'candidates',
+      size: 300,
+      grow: 2,
+      Cell: ({ row }) => {
+        const term = row.original.term;
+        const candidates = row.original.candidates;
         return (
           <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', py: 0.5 }}>
-            {candidates.slice(0, 5).map((candidate: string, idx: number) => (
+            {candidates.slice(0, 5).map((candidate, idx) => (
               <Chip
                 key={idx}
                 label={candidate}
@@ -102,14 +103,15 @@ export default function SearchHistoryPanel() {
       },
     },
     {
-      field: 'updated_at',
-      headerName: '最后查询',
-      width: 180,
-      valueFormatter: (value) => new Date(value).toLocaleString('zh-CN'),
+      header: '最后查询',
+      accessorKey: 'updated_at',
+      size: 180,
+      Cell: ({ cell }) =>
+        new Date(cell.getValue<number>()).toLocaleString('zh-CN'),
     },
-  ];
+  ], [handleChipClick]);
 
-  const rows = history.map((entry, idx) => ({
+  const rows: HistoryRow[] = history.map((entry, idx) => ({
     id: idx,
     term: entry.term,
     candidates: entry.candidates,
@@ -129,27 +131,58 @@ export default function SearchHistoryPanel() {
       )}
 
       <Box sx={{ flex: 1, minHeight: 0 }}>
-        <DataGrid
-          rows={rows}
+        <MaterialReactTable<HistoryRow>
           columns={columns}
-          loading={loading}
-          density="compact"
-          pageSizeOptions={[50, 100, 300]}
+          data={rows}
+          getRowId={(row, index) =>
+            row?.id !== undefined && row?.id !== null
+              ? row.id.toString()
+              : `row-${index}`
+          }
+          enableTopToolbar={false}
+          enableColumnFilters={false}
+          layoutMode="grid"
           initialState={{
-            pagination: { paginationModel: { pageSize: 100 } },
-            sorting: {
-              sortModel: [{ field: 'updated_at', sort: 'desc' }],
-            },
+            pagination: { pageIndex: 0, pageSize: 100 },
+            sorting: [{ id: 'updated_at', desc: true }],
           }}
-          getRowHeight={() => 'auto'}
-          sx={{
-            '& .MuiDataGrid-cell': {
+          muiTablePaperProps={{
+            elevation: 0,
+            sx: { height: '100%', display: 'flex', flexDirection: 'column' },
+          }}
+          muiTableContainerProps={{
+            sx: { flex: 1 },
+          }}
+          muiTableBodyCellProps={{
+            sx: {
               py: 1,
-            },
-            '& .MuiDataGrid-cell:focus': {
-              outline: 'none',
+              '&:focus': {
+                outline: 'none',
+              },
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              maxWidth: '100%',
             },
           }}
+          muiTableBodyRowProps={{
+            sx: {
+              '&:hover': {
+                backgroundColor: 'action.hover',
+              },
+              '& td': {
+                whiteSpace: 'normal',
+              },
+            },
+          }}
+          muiPaginationProps={{
+            rowsPerPageOptions: [50, 100, 300],
+          }}
+          state={{
+            isLoading: loading,
+            showProgressBars: loading,
+          }}
+          positionPagination="bottom"
         />
       </Box>
 
