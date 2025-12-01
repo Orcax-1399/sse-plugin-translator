@@ -87,6 +87,8 @@ pub fn run() {
             commands::get_settings,
             commands::set_game_path,
             commands::clear_game_path,
+            commands::set_dsd_output_dir,
+            commands::clear_dsd_output_dir,
             // 插件扫描
             commands::validate_game_directory,
             commands::get_plugin_list,
@@ -106,6 +108,7 @@ pub fn run() {
             commands::close_plugin_session,
             commands::list_plugin_sessions,
             commands::apply_translations,
+            commands::export_dsd,
             // ESP 对照
             commands::load_esp_reference,
             // ESP 提取

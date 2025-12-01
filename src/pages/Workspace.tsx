@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Box } from "@mui/material";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "../stores/appStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { useApiConfigStore } from "../stores/apiConfigStore";
@@ -42,8 +43,10 @@ const openAtomicDbWindow = async () => {
 export default function Workspace() {
   const navigate = useNavigate();
 
-  const { gamePath, loadSettings } = useAppStore();
+  const { gamePath, dsdOutputDir, loadSettings } = useAppStore();
   const clearGamePath = useAppStore((state) => state.clearGamePath);
+  const setDsdOutputDir = useAppStore((state) => state.setDsdOutputDir);
+  const clearDsdOutputDir = useAppStore((state) => state.clearDsdOutputDir);
 
   // ✅ 只获取需要的 action 函数（zustand actions 引用稳定）
   const openSession = useSessionStore((state) => state.openSession);
@@ -118,13 +121,36 @@ export default function Workspace() {
       console.warn("移除本地工作区缓存失败:", error);
     }
     try {
+      // 清除 DSD 导出目录设置
+      await clearDsdOutputDir?.();
+    } catch (error) {
+      console.warn("清除 DSD 导出目录失败:", error);
+    }
+    try {
       await clearGamePath?.();
     } catch (error) {
       console.error("清除工作区路径失败:", error);
     } finally {
       navigate("/");
     }
-  }, [clearGamePath, navigate]);
+  }, [clearGamePath, clearDsdOutputDir, navigate]);
+
+  // 处理设置 DSD 导出目录
+  const handleSetDsdOutputDir = useCallback(async () => {
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: "选择 DSD 导出目录",
+      });
+
+      if (selected && typeof selected === "string") {
+        await setDsdOutputDir?.(selected);
+      }
+    } catch (error) {
+      console.error("选择 DSD 导出目录失败:", error);
+    }
+  }, [setDsdOutputDir]);
 
   // 处理插件点击：检查是否已打开，已打开则切换，未打开则新建
   const handlePluginClick = useCallback(
@@ -154,9 +180,12 @@ export default function Workspace() {
       <WorkspaceAppBar
         onToggleDrawer={handleToggleDrawer}
         gamePath={gamePath}
+        dsdOutputDir={dsdOutputDir}
         onOpenSettings={handleOpenSettings}
         onOpenAtomicDb={openAtomicDbWindow}
         onResetWorkspace={handleResetWorkspace}
+        onSetDsdOutputDir={handleSetDsdOutputDir}
+        onClearDsdOutputDir={clearDsdOutputDir}
       />
 
       {/* 左侧插件列表 */}

@@ -8,6 +8,7 @@ import type { AppState, Settings, PluginInfo } from '../types';
 export const useAppStore = create<AppState>((set, get) => ({
   // 状态
   gamePath: null,
+  dsdOutputDir: null,
   plugins: [],
   isLoading: false,
   error: null,
@@ -21,6 +22,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       set({
         gamePath: settings.game,
+        dsdOutputDir: settings.dsd_output_dir ?? null,
         isLoading: false,
       });
 
@@ -101,6 +103,32 @@ export const useAppStore = create<AppState>((set, get) => ({
         error: error instanceof Error ? error.message : String(error),
         isLoading: false,
         plugins: [],
+      });
+    }
+  },
+
+  // 设置 DSD 导出目录
+  setDsdOutputDir: async (path: string) => {
+    try {
+      await invoke('set_dsd_output_dir', { path });
+      set({ dsdOutputDir: path });
+    } catch (error) {
+      console.error('设置 DSD 导出目录失败:', error);
+      set({
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  },
+
+  // 清除 DSD 导出目录
+  clearDsdOutputDir: async () => {
+    try {
+      await invoke('clear_dsd_output_dir');
+      set({ dsdOutputDir: null });
+    } catch (error) {
+      console.error('清除 DSD 导出目录失败:', error);
+      set({
+        error: error instanceof Error ? error.message : String(error),
       });
     }
   },

@@ -4,6 +4,8 @@
 export interface Settings {
   /** 游戏路径 */
   game: string | null;
+  /** DSD 导出目录（可选，如果未设置则使用源文件所在目录） */
+  dsd_output_dir?: string | null;
 }
 
 /**
@@ -124,6 +126,18 @@ export interface StringRecord {
 }
 
 /**
+ * DSD (Dynamic String Distributor) 导出条目
+ */
+export interface DsdEntry {
+  /** Form ID */
+  form_id: string;
+  /** 类型 (record_type + subrecord_type) */
+  type: string;
+  /** 翻译后的文本 */
+  string: string;
+}
+
+/**
  * 加载插件返回的完整响应
  */
 export interface PluginStringsResponse {
@@ -226,6 +240,8 @@ export interface SessionState {
   saveSessionTranslations?: (sessionId: string) => Promise<number>;
   /** 应用翻译到插件文件（生成新的 ESP 文件） */
   applyTranslations?: (sessionId: string, saveAs?: string) => Promise<string>;
+  /** 导出 DSD (Dynamic String Distributor) 格式 */
+  exportDsd?: (sessionId: string) => Promise<string>;
   /** 设置错误信息 */
   setError: (error: string | null) => void;
   /** 设置筛选状态 */
@@ -269,6 +285,8 @@ export interface SessionState {
 export interface AppState {
   /** 游戏路径 */
   gamePath: string | null;
+  /** DSD 导出目录 */
+  dsdOutputDir: string | null;
   /** 插件列表 */
   plugins: PluginInfo[];
   /** 加载状态 */
@@ -283,6 +301,10 @@ export interface AppState {
   setGamePath: (path: string) => Promise<void>;
   /** 清除游戏路径（重新选择工作区） */
   clearGamePath?: () => Promise<void>;
+  /** 设置 DSD 导出目录 */
+  setDsdOutputDir?: (path: string) => Promise<void>;
+  /** 清除 DSD 导出目录 */
+  clearDsdOutputDir?: () => Promise<void>;
   /** 加载插件列表 */
   loadPlugins: () => Promise<void>;
   /** 设置错误信息 */

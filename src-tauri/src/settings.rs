@@ -7,11 +7,17 @@ use std::path::PathBuf;
 pub struct Settings {
     /// 游戏路径（可选）
     pub game: Option<String>,
+    /// DSD 导出目录（可选，如果未设置则使用源文件所在目录）
+    #[serde(default)]
+    pub dsd_output_dir: Option<String>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { game: None }
+        Self {
+            game: None,
+            dsd_output_dir: None,
+        }
     }
 }
 

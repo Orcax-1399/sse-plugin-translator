@@ -3,6 +3,14 @@
  * 负责构建System Prompt和User Prompt
  */
 
+export interface AiHistoryEntry {
+  timestamp: number;
+  role: "assistant" | "system" | "tool";
+  tool?: string;
+  message: string;
+  result?: string;
+}
+
 export interface SessionState {
   csv: Array<{
     index: number;
@@ -14,7 +22,7 @@ export interface SessionState {
   totalCount: number;
   /** 已完成条目数量（会随着 apply 更新） */
   completedCount: number;
-  /** search 使用统计与最近一次调用信息 */
+  /** search 使用统计 */
   searchMeta: {
     lastTerms: string[];
     executedTerms: string[];
@@ -23,24 +31,8 @@ export interface SessionState {
     budgetUsed: number;
     budgetTotal: number;
   };
-  /** 最近一次 apply 的摘要（帮助 AI 判断调用是否成功） */
-  recentApply?: {
-    indices: number[];
-    preview: Array<{ index: number; translated: string }>;
-    timestamp: number;
-  };
-  /** 最近一次 skip 的摘要（供AI确认跳过结果） */
-  recentSkip?: {
-    indices: number[];
-    preview: Array<{ index: number; reason?: string }>;
-    timestamp: number;
-  };
-  lastError?: {
-    tool: string;
-    args: any;
-    error: string;
-    aiResponse?: string;
-  };
+  /** 最近的历史对话（search/apply/skip/error），FIFO */
+  history: AiHistoryEntry[];
 }
 
 export interface SearchResult {
@@ -171,71 +163,30 @@ export function buildUserPrompt(state: SessionState): string {
     prompt += "\n```\n\n";
   }
 
-  // 3. Progress / Search Meta
+  // 3. 进度
   prompt += `## 进度\n\n`;
   prompt += `- 已完成: ${state.completedCount}/${state.totalCount}\n`;
-  prompt += `- search预算: ${state.searchMeta.budgetUsed}/${state.searchMeta.budgetTotal}\n`;
-  if (state.searchMeta.lastTerms.length > 0) {
-    const lastTerms = state.searchMeta.lastTerms.slice(0, 10).join(", ");
-    const executed = state.searchMeta.executedTerms.slice(0, 10).join(", ");
-    const cacheHits = state.searchMeta.cacheHits.slice(0, 10).join(", ");
-    const deferred =
-      state.searchMeta.deferredTerms.length > 0
-        ? state.searchMeta.deferredTerms.slice(0, 10).join(", ")
-        : "无";
-    prompt += `- 上次search请求: [${lastTerms}]\n`;
-    prompt += `  * 实际查询: [${executed || "无"}]\n`;
-    prompt += `  * 缓存命中: [${cacheHits || "无"}]\n`;
-    prompt += `  * 因预算延迟: [${deferred}]\n`;
-  } else {
-    prompt += `- 尚未调用search\n`;
-  }
-  if (state.recentApply) {
-    const count = state.recentApply.indices.length;
-    const indices = state.recentApply.indices.slice(-5).join(", ");
-    const preview = state.recentApply.preview
-      .slice(-3)
-      .map((p) => `${p.index}:"${p.translated.slice(0, 20)}"`)
-      .join("; ");
-    prompt += `- 上次apply: 成功提交 ${count} 条\n`;
-    prompt += `  * index: [${indices}${count > 5 ? "..." : ""}]\n`;
-    if (preview) {
-      prompt += `  * 译文片段: ${preview}\n`;
-    }
-  } else {
-    prompt += `- 尚未提交 apply_translations\n`;
-  }
-  if (state.recentSkip) {
-    const skipCount = state.recentSkip.indices.length;
-    const indices = state.recentSkip.indices.slice(-5).join(", ");
-    const preview = state.recentSkip.preview
-      .slice(-3)
-      .map(
-        (p) =>
-          `${p.index}:\"${
-            p.reason && p.reason.length > 0 ? p.reason.slice(0, 20) : "无说明"
-          }\"`,
-      )
-      .join("; ");
-    prompt += `- 上次skip: 跳过 ${skipCount} 条\n`;
-    prompt += `  * index: [${indices}${skipCount > 5 ? "..." : ""}]\n`;
-    if (preview) {
-      prompt += `  * 理由: ${preview}\n`;
-    }
-  }
-  prompt += `\n`;
+  prompt += `- search预算: ${state.searchMeta.budgetUsed}/${state.searchMeta.budgetTotal}\n\n`;
 
-  // 4. 错误信息（如果有）
-  if (state.lastError) {
-    prompt += `## ⚠️ 上次工具调用错误\n\n`;
-    prompt += `工具: ${state.lastError.tool}\n`;
-    prompt += `参数: ${JSON.stringify(state.lastError.args)}\n`;
-    prompt += `错误: ${state.lastError.error}\n`;
-    if (state.lastError.aiResponse) {
-      prompt += `AI响应: ${state.lastError.aiResponse}\n`;
-    }
+  if (
+    state.searchMeta.budgetUsed >= state.searchMeta.budgetTotal &&
+    state.searchMeta.budgetTotal > 0
+  ) {
+    prompt += `⚠️ search预算已耗尽：请立刻使用 apply_translations 或 skip 完成一部分任务(利用现有信息可以翻译的部分)，即可获得更多预算。\n\n`;
+  }
+
+  // 4. 历史记录（最多若干条）
+  prompt += `## 历史记录（最近 ${state.history.length} 条）\n\n`;
+  if (state.history.length === 0) {
+    prompt += `(暂无历史记录)\n\n`;
+  } else {
+    state.history.forEach((entry, idx) => {
+      const role = entry.role.toUpperCase();
+      const toolInfo = entry.tool ? ` ${entry.tool}` : "";
+      const resultInfo = entry.result ? ` => ${entry.result}` : "";
+      prompt += `${idx + 1}. [${role}${toolInfo}] ${entry.message}${resultInfo}\n`;
+    });
     prompt += `\n`;
-    prompt += `请根据错误信息调整参数并重试。\n\n`;
   }
 
   prompt += `---\n\n请使用工具完成翻译任务。`;

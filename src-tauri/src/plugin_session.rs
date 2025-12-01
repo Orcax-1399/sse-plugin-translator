@@ -27,6 +27,15 @@ fn default_translation_status() -> String {
     "untranslated".to_string()
 }
 
+/// DSD (Dynamic String Distributor) 导出条目
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DsdEntry {
+    pub form_id: String,
+    #[serde(rename = "type")]
+    pub entry_type: String,
+    pub string: String,
+}
+
 /// 插件 Session（使用 Arc 共享数据，减少克隆开销）
 pub struct PluginSession {
     pub plugin_name: String,
@@ -187,6 +196,25 @@ impl PluginSessionManager {
             .collect()
     }
 
+    /// 获取指定 Session 的原文映射（key -> original_text）
+    pub fn get_original_string_map(&self, session_id: &str) -> Option<HashMap<String, String>> {
+        self.sessions.get(session_id).map(|session| {
+            session
+                .strings
+                .iter()
+                .map(|record| {
+                    (
+                        format!(
+                            "{}|{}|{}|{}",
+                            record.form_id, record.record_type, record.subrecord_type, record.index
+                        ),
+                        record.original_text.clone(),
+                    )
+                })
+                .collect()
+        })
+    }
+
     /// 应用翻译到插件文件
     ///
     /// # 参数
@@ -287,5 +315,83 @@ impl PluginSessionManager {
         }
 
         Ok(target_path.to_string_lossy().to_string())
+    }
+
+    /// 导出 DSD (Dynamic String Distributor) 格式的 JSON 文件
+    ///
+    /// # 参数
+    /// * `session_id` - Session ID
+    /// * `records` - 要导出的翻译记录（来自前端）
+    /// * `output_base_dir` - 自定义输出基础目录（可选，如果为 None 则使用源文件所在目录）
+    ///
+    /// # 返回
+    /// * `Ok(String)` - 生成的文件路径
+    /// * `Err(String)` - 错误信息
+    pub fn export_dsd(
+        &self,
+        session_id: &str,
+        records: Vec<StringRecord>,
+        output_base_dir: Option<String>,
+    ) -> Result<String, String> {
+        let session = self
+            .sessions
+            .get(session_id)
+            .ok_or_else(|| format!("Session {} 不存在", session_id))?;
+
+        let plugin_path = &session.plugin_path;
+
+        // 确定基础目录：优先使用自定义目录，否则使用源文件所在目录
+        let base_dir = if let Some(ref custom_dir) = output_base_dir {
+            PathBuf::from(custom_dir)
+        } else {
+            plugin_path
+                .parent()
+                .ok_or("无法获取插件所在目录")?
+                .to_path_buf()
+        };
+
+        // 获取插件名称（带扩展名，用于目录名）
+        let plugin_name_with_ext = &session.plugin_name;
+
+        // 获取插件名称（不带扩展名，用于文件名）
+        let plugin_name_without_ext = plugin_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or("无法获取插件名称")?;
+
+        // 构建输出目录：<base_dir>/SKSE/DynamicStringDistributor/<plugin_name>/
+        let output_dir = base_dir
+            .join("SKSE")
+            .join("DynamicStringDistributor")
+            .join(plugin_name_with_ext);
+
+        // 创建目录（如果不存在）
+        fs::create_dir_all(&output_dir)
+            .map_err(|e| format!("创建目录失败: {}", e))?;
+
+        // 构建输出文件路径
+        let output_file = output_dir.join(format!("{}.json", plugin_name_without_ext));
+
+        // 转换为 DSD 格式
+        let dsd_entries: Vec<DsdEntry> = records
+            .into_iter()
+            .map(|r| DsdEntry {
+                form_id: r.form_id,
+                entry_type: format!("{} {}", r.record_type, r.subrecord_type),
+                string: r.translated_text,
+            })
+            .collect();
+
+        // 序列化为 JSON
+        let json = serde_json::to_string_pretty(&dsd_entries)
+            .map_err(|e| format!("序列化 JSON 失败: {}", e))?;
+
+        // 写入文件
+        fs::write(&output_file, json)
+            .map_err(|e| format!("写入文件失败: {}", e))?;
+
+        println!("✓ DSD 导出成功: {:?}", output_file);
+
+        Ok(output_file.to_string_lossy().to_string())
     }
 }

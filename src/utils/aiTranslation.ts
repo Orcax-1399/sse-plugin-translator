@@ -6,7 +6,7 @@
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import type { ApiConfig } from "../stores/apiConfigStore";
-import type { SessionState, SearchResult } from "./aiPrompts";
+import type { AiHistoryEntry, SessionState, SearchResult } from "./aiPrompts";
 import { buildMessages } from "./aiPrompts";
 import {
   toolDefinitions,
@@ -19,6 +19,7 @@ import {
 
 const MIN_SEARCH_BUDGET = 8;
 const MAX_SEARCH_BUDGET = 30;
+const MAX_HISTORY_ENTRIES = 10;
 
 function computeSearchBudget(entries: Array<{ text: string }>) {
   if (!entries || entries.length === 0) {
@@ -37,6 +38,18 @@ function computeSearchBudget(entries: Array<{ text: string }>) {
   const rough = entryFactor + lengthFactor;
 
   return Math.min(MAX_SEARCH_BUDGET, Math.max(MIN_SEARCH_BUDGET, rough));
+}
+
+type HistoryInput = Omit<AiHistoryEntry, "timestamp">;
+
+function pushHistory(state: SessionState, entry: HistoryInput) {
+  state.history.push({
+    timestamp: Date.now(),
+    ...entry,
+  });
+  if (state.history.length > MAX_HISTORY_ENTRIES) {
+    state.history.splice(0, state.history.length - MAX_HISTORY_ENTRIES);
+  }
 }
 
 /**
@@ -102,6 +115,7 @@ export interface AiStatusUpdate {
 export interface CancellationToken {
   cancel: () => void;
   isCancelled: () => boolean;
+  onCancel: (listener: () => void) => () => void;
 }
 
 /**
@@ -177,7 +191,7 @@ export async function translateBatchWithAI(
         budgetUsed: 0,
         budgetTotal: searchBudget,
       },
-      recentApply: undefined,
+      history: [],
     };
 
     // 3. 创建entry映射（用于apply_translations时查找完整信息）
@@ -244,20 +258,42 @@ export async function translateBatchWithAI(
         JSON.stringify(messages, null, 2).slice(0, 1000) + "...",
       );
       let completion: OpenAI.Chat.Completions.ChatCompletion;
-      try {
-        completion = await client.chat.completions.create({
-          model: apiConfig.modelName,
-          messages: messages as ChatCompletionMessageParam[],
-          tools: [
-            toolDefinitions.search,
-            toolDefinitions.applyTranslations,
-            toolDefinitions.skip,
-          ],
-          tool_choice: "required",
-          temperature: 0.1,
-          max_tokens: apiConfig.maxTokens,
+      const abortController = new AbortController();
+      let unregisterCancel: (() => void) | undefined;
+      if (cancellationToken) {
+        unregisterCancel = cancellationToken.onCancel(() => {
+          if (!abortController.signal.aborted) {
+            abortController.abort();
+          }
         });
+      }
+      try {
+        completion = await client.chat.completions.create(
+          {
+            model: apiConfig.modelName,
+            messages: messages as ChatCompletionMessageParam[],
+            tools: [
+              toolDefinitions.search,
+              toolDefinitions.applyTranslations,
+              toolDefinitions.skip,
+            ],
+            tool_choice: "required",
+            temperature: 0.1,
+            max_tokens: apiConfig.maxTokens,
+          },
+          { signal: abortController.signal },
+        );
+        unregisterCancel?.();
       } catch (error: any) {
+        unregisterCancel?.();
+        if (abortController.signal.aborted || cancellationToken?.isCancelled()) {
+          console.warn("[AI翻译] 请求已取消");
+          return {
+            success: false,
+            translatedCount: totalCount - sessionState.csv.length,
+            error: "用户取消翻译",
+          };
+        }
         console.error("[AI翻译] API调用失败:", error);
         emitStatus(
           "error",
@@ -299,18 +335,14 @@ export async function translateBatchWithAI(
           "error",
           `AI返回无效结果（未调用任何工具），正在重试。内容: ${trimmedPreview}`,
         );
-        sessionState.lastError = {
-          tool: "system",
-          args: {},
-          error:
+        pushHistory(sessionState, {
+          role: "system",
+          message:
             "你必须调用工具（search / apply_translations / skip），不能直接输出文本。",
-          aiResponse: aiResponsePreview,
-        };
+          result: trimmedPreview,
+        });
         continue;
       }
-
-      // 清除上次错误（如果有）
-      delete sessionState.lastError;
 
       // 4.4 执行工具调用
       let hasError = false;
@@ -350,12 +382,12 @@ export async function translateBatchWithAI(
                 cacheHits: [],
                 deferredTerms: [],
               };
-              sessionState.lastError = {
+              pushHistory(sessionState, {
+                role: "tool",
                 tool: "search",
-                args,
-                error: "search参数为空，无法执行查询",
-                aiResponse: aiResponsePreview,
-              };
+                message: "search参数为空，无法执行查询",
+                result: aiResponsePreview,
+              });
               hasError = true;
               break;
             }
@@ -391,13 +423,13 @@ export async function translateBatchWithAI(
                 budgetUsed,
                 budgetTotal,
               };
-              sessionState.lastError = {
-                tool: "search",
-                args,
-                error: "search预算已耗尽，请使用已有信息继续翻译。",
-                aiResponse: aiResponsePreview,
-              };
               emitStatus("error", "search预算已耗尽，请复用现有缓存并继续翻译");
+              pushHistory(sessionState, {
+                role: "system",
+                message:
+                  "search预算已耗尽，请停止search并使用apply_translations（或skip）完成一部分翻译(利用现有信息可以翻译的部分)，即可获得更多预算。",
+                result: `剩余术语 ${normalizedTerms.length} 个`,
+              });
               hasError = true;
               break;
             }
@@ -429,18 +461,23 @@ export async function translateBatchWithAI(
             console.log(
               `[AI翻译] search完成，查询了 ${execution.queriedTerms.length} 个术语，缓存命中 ${cacheHits.length} 个`,
             );
+            pushHistory(sessionState, {
+              role: "tool",
+              tool: "search",
+              message: `执行 ${execution.queriedTerms.length} 个术语（缓存命中 ${cacheHits.length} 个）`,
+            });
           } catch (error: any) {
             console.error("[AI翻译] search执行失败:", error);
             emitStatus(
               "error",
               `search执行失败: ${error.message || String(error)}`,
             );
-            sessionState.lastError = {
+            pushHistory(sessionState, {
+              role: "tool",
               tool: "search",
-              args,
-              error: error.message || String(error),
-              aiResponse: aiResponsePreview,
-            };
+              message: "search 执行失败",
+              result: error.message || String(error),
+            });
             hasError = true;
             break;
           }
@@ -457,12 +494,12 @@ export async function translateBatchWithAI(
               translations = JSON.parse(translations);
             } catch (e) {
               console.error("[AI翻译] 解析translations失败:", e);
-              sessionState.lastError = {
+              pushHistory(sessionState, {
+                role: "tool",
                 tool: "apply_translations",
-                args,
-                error: `translations格式错误: ${String(e)}`,
-                aiResponse: aiResponsePreview,
-              };
+                message: "translations格式错误",
+                result: String(e),
+              });
               hasError = true;
               break;
             }
@@ -501,12 +538,12 @@ export async function translateBatchWithAI(
               "error",
               `apply_translations执行失败: ${applyResult.error || "未知错误"}`,
             );
-            sessionState.lastError = {
+            pushHistory(sessionState, {
+              role: "tool",
               tool: "apply_translations",
-              args,
-              error: applyResult.error || "未知错误",
-              aiResponse: aiResponsePreview,
-            };
+              message: "apply_translations执行失败",
+              result: applyResult.error || "未知错误",
+            });
             hasError = true;
             break;
           }
@@ -528,28 +565,21 @@ export async function translateBatchWithAI(
           const completed = totalCount - sessionState.csv.length;
           sessionState.completedCount = completed;
           const appliedIndices = applyResult.appliedIndices ?? [];
-          sessionState.recentApply = {
-            indices: appliedIndices.slice(-5),
-            preview: appliedIndices
-              .slice(-3)
-              .map((idx) => {
-                const match = translationItems.find(
-                  (item) => item.index === idx,
-                );
-                return {
-                  index: idx,
-                  translated: match ? match.translated : "",
-                };
-              })
-              .filter((item) => item.translated.length > 0),
-            timestamp: Date.now(),
-          };
           sessionState.searchMeta = {
             ...sessionState.searchMeta,
             deferredTerms: [],
             budgetUsed: 0,
             budgetTotal: computeSearchBudget(sessionState.csv),
           };
+          pushHistory(sessionState, {
+            role: "tool",
+            tool: "apply_translations",
+            message: `提交 ${directCount} 条`,
+            result:
+              expandedCount > 0
+                ? `扩散 ${expandedCount} 条`
+                : `index: ${appliedIndices.slice(-3).join(", ")}`,
+          });
 
           onProgress(completed, totalCount);
         } else if (toolName === "skip") {
@@ -558,12 +588,12 @@ export async function translateBatchWithAI(
             try {
               entries = JSON.parse(entries);
             } catch (error) {
-              sessionState.lastError = {
+              pushHistory(sessionState, {
+                role: "tool",
                 tool: "skip",
-                args,
-                error: `entries格式错误: ${String(error)}`,
-                aiResponse: aiResponsePreview,
-              };
+                message: "entries格式错误",
+                result: String(error),
+              });
               hasError = true;
               break;
             }
@@ -587,12 +617,12 @@ export async function translateBatchWithAI(
             .filter((item) => Number.isFinite(item.index));
 
           if (normalized.length === 0) {
-            sessionState.lastError = {
+            pushHistory(sessionState, {
+              role: "tool",
               tool: "skip",
-              args,
-              error: "entries不能为空，且必须包含有效的index",
-              aiResponse: aiResponsePreview,
-            };
+              message: "entries不能为空，且必须包含有效的index",
+              result: aiResponsePreview,
+            });
             hasError = true;
             break;
           }
@@ -607,12 +637,12 @@ export async function translateBatchWithAI(
               "error",
               `skip执行失败: ${skipResult.error || "未知错误"}`,
             );
-            sessionState.lastError = {
+            pushHistory(sessionState, {
+              role: "tool",
               tool: "skip",
-              args,
-              error: skipResult.error || "未知错误",
-              aiResponse: aiResponsePreview,
-            };
+              message: "skip执行失败",
+              result: skipResult.error || "未知错误",
+            });
             hasError = true;
             break;
           }
@@ -620,11 +650,6 @@ export async function translateBatchWithAI(
           const skippedEntries = skipResult.skippedEntries ?? [];
           const completed = totalCount - sessionState.csv.length;
           sessionState.completedCount = completed;
-          sessionState.recentSkip = {
-            indices: skippedEntries.map((entry) => entry.index).slice(-5),
-            preview: skippedEntries.slice(-3),
-            timestamp: Date.now(),
-          };
 
           console.log(
             `[AI翻译] skip完成，跳过了 ${skippedEntries.length} 条无需翻译的记录`,
@@ -633,15 +658,19 @@ export async function translateBatchWithAI(
             "info",
             `AI跳过 ${skippedEntries.length} 条无需翻译的记录`,
           );
+          pushHistory(sessionState, {
+            role: "tool",
+            tool: "skip",
+            message: `跳过 ${skippedEntries.length} 条记录`,
+          });
           onProgress(completed, totalCount);
         } else {
           console.warn(`[AI翻译] 收到未知工具: ${toolName}`);
-          sessionState.lastError = {
+          pushHistory(sessionState, {
+            role: "system",
             tool: toolName || "unknown",
-            args,
-            error: "不支持的工具调用",
-            aiResponse: aiResponsePreview,
-          };
+            message: "不支持的工具调用",
+          });
           hasError = true;
           break;
         }
@@ -690,12 +719,39 @@ export async function translateBatchWithAI(
  */
 export function createCancellationToken(): CancellationToken {
   let cancelled = false;
+  const listeners = new Set<() => void>();
   return {
     cancel: () => {
+      if (cancelled) {
+        return;
+      }
       cancelled = true;
       console.log("[AI翻译] 取消令牌已触发");
+      listeners.forEach((listener) => {
+        try {
+          listener();
+        } catch (error) {
+          console.warn("取消回调执行失败:", error);
+        }
+      });
+      listeners.clear();
     },
     isCancelled: () => cancelled,
+    onCancel: (listener: () => void) => {
+      if (cancelled) {
+        // 已取消时立即执行，且返回空解绑函数
+        try {
+          listener();
+        } catch (error) {
+          console.warn("取消回调执行失败:", error);
+        }
+        return () => {};
+      }
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
   };
 }
 

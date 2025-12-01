@@ -1,4 +1,5 @@
 use crate::plugin_session::{PluginSessionManager, PluginStringsResponse, SessionInfo, StringRecord};
+use crate::settings::read_settings;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -53,4 +54,23 @@ pub fn apply_translations(
         .map_err(|e| format!("Session 管理器锁定失败: {}", e))?;
 
     manager.apply_translations(&session_id, translations, save_as)
+}
+
+/// 导出 DSD (Dynamic String Distributor) 格式
+#[tauri::command]
+pub fn export_dsd(
+    session_manager: tauri::State<Mutex<PluginSessionManager>>,
+    session_id: String,
+    records: Vec<StringRecord>,
+) -> Result<String, String> {
+    let manager = session_manager
+        .lock()
+        .map_err(|e| format!("Session 管理器锁定失败: {}", e))?;
+
+    // 读取设置获取自定义导出目录
+    let output_base_dir = read_settings()
+        .ok()
+        .and_then(|s| s.dsd_output_dir);
+
+    manager.export_dsd(&session_id, records, output_base_dir)
 }

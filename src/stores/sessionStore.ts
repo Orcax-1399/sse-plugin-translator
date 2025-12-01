@@ -635,12 +635,30 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         `✓ Session ${sessionId}: 保存成功 ${translationsToSave.length} 条`,
       );
 
-      // ✅ 清空该 session 的 pendingChanges
-      if (pendingChanges && pendingChanges.has(sessionId)) {
-        const newPendingChanges = new Map(pendingChanges);
+      const savedRecordIds = new Set(changedFormIds);
+      set((state) => {
+        const newSessions = new Map(state.openedSessions);
+        const targetSession = newSessions.get(sessionId);
+        if (targetSession) {
+          const updatedSession = produce(targetSession, (draft) => {
+            draft.strings.forEach((record) => {
+              const recordId = `${record.form_id}|${record.record_type}|${record.subrecord_type}|${record.index}`;
+              if (savedRecordIds.has(recordId)) {
+                record.translation_status = "manual";
+              }
+            });
+          });
+          newSessions.set(sessionId, updatedSession);
+        }
+
+        const newPendingChanges = new Map(state.pendingChanges);
         newPendingChanges.delete(sessionId);
-        set({ pendingChanges: newPendingChanges });
-      }
+
+        return {
+          openedSessions: newSessions,
+          pendingChanges: newPendingChanges,
+        };
+      });
 
       return translationsToSave.length;
     } catch (error) {
@@ -683,6 +701,37 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       console.error("应用翻译失败:", errorMsg);
+      throw new Error(errorMsg);
+    }
+  },
+
+  /**
+   * 导出 DSD (Dynamic String Distributor) 格式
+   *
+   * @param sessionId - Session ID
+   * @returns 生成的文件路径
+   */
+  exportDsd: async (sessionId: string): Promise<string> => {
+    const { openedSessions } = get();
+    const session = openedSessions.get(sessionId);
+
+    if (!session) {
+      throw new Error(`Session 不存在: ${sessionId}`);
+    }
+
+    console.log(`开始导出 DSD 格式: ${sessionId}`);
+
+    try {
+      const savedPath = await invoke<string>("export_dsd", {
+        sessionId,
+        records: session.strings,
+      });
+
+      console.log(`✓ DSD 已导出到: ${savedPath}`);
+      return savedPath;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error("导出 DSD 失败:", errorMsg);
       throw new Error(errorMsg);
     }
   },

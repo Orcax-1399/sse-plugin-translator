@@ -2,7 +2,6 @@ use crate::bsa_logger::log_bsa_presence;
 use crate::plugin_session::PluginSessionManager;
 use esp_extractor::LoadedPlugin;
 use serde::Serialize;
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::Emitter;
@@ -56,24 +55,26 @@ pub async fn load_esp_reference(
         reference_path, session_id
     );
 
-    // 1. 验证 session 存在
-    {
+    // 1. 获取当前 Session 中的原文映射
+    let english_map = {
         let manager = session_manager
             .lock()
             .map_err(|e| format!("获取 Session 管理器锁失败: {}", e))?;
 
-        let sessions = manager.list_sessions();
-        if !sessions.iter().any(|s| s.session_id == session_id) {
-            let error_payload = EspReferenceErrorPayload {
-                session_id: session_id.clone(),
-                error: format!("Session {} 不存在", session_id),
-            };
-            let _ = app.emit("esp-reference-error", error_payload);
-            return Err(format!("Session {} 不存在", session_id));
+        match manager.get_original_string_map(&session_id) {
+            Some(map) => map,
+            None => {
+                let error_payload = EspReferenceErrorPayload {
+                    session_id: session_id.clone(),
+                    error: format!("Session {} 不存在", session_id),
+                };
+                let _ = app.emit("esp-reference-error", error_payload);
+                return Err(format!("Session {} 不存在", session_id));
+            }
         }
-    }
+    };
 
-    // 2. 加载参考 ESP 文件（英文版 + 中文版）
+    // 2. 加载参考 ESP 文件（仅译文）
     let ref_path = PathBuf::from(&reference_path);
 
     // 获取参考文件名
@@ -83,23 +84,7 @@ pub async fn load_esp_reference(
         .unwrap_or("unknown")
         .to_string();
 
-    // 加载英文版（原文）
-    log_bsa_presence(&ref_path, Some("english"));
-    let loaded_en = match LoadedPlugin::load_auto(ref_path.clone(), Some("english")) {
-        Ok(p) => p,
-        Err(e) => {
-            let error_payload = EspReferenceErrorPayload {
-                session_id: session_id.clone(),
-                error: format!("加载英文版失败: {}", e),
-            };
-            let _ = app.emit("esp-reference-error", error_payload);
-            return Err(format!("加载英文版失败: {}", e));
-        }
-    };
-    let english_strings = loaded_en.extract_strings();
-    println!("✓ 英文版提取 {} 条字符串", english_strings.len());
-
-    // 加载中文版（译文）
+    // 加载译文
     log_bsa_presence(&ref_path, Some("chinese"));
     let loaded_zh = match LoadedPlugin::load_auto(ref_path.clone(), Some("chinese")) {
         Ok(p) => p,
@@ -113,19 +98,9 @@ pub async fn load_esp_reference(
         }
     };
     let chinese_strings = loaded_zh.extract_strings();
-    println!("✓ 中文版提取 {} 条字符串", chinese_strings.len());
+    println!("✓ 译文提取 {} 条字符串", chinese_strings.len());
 
-    // 3. 构建映射：key -> (original, translated)
-    // key = form_id|record_type|subrecord_type|index
-    let mut english_map: HashMap<String, String> = HashMap::new();
-    for s in english_strings {
-        let key = format!(
-            "{}|{}|{}|{}",
-            s.form_id, s.record_type, s.subrecord_type, s.index
-        );
-        english_map.insert(key, s.text);
-    }
-
+    // 3. 根据 session 原文映射筛选译文
     let mut records: Vec<ReferenceRecord> = Vec::new();
     for s in chinese_strings {
         let key = format!(
@@ -133,8 +108,9 @@ pub async fn load_esp_reference(
             s.form_id, s.record_type, s.subrecord_type, s.index
         );
 
-        // 获取对应的英文原文
-        let original_text = english_map.get(&key).cloned().unwrap_or_default();
+        let Some(original_text) = english_map.get(&key).cloned() else {
+            continue;
+        };
 
         // 只保留有实际翻译的记录（中英文不同）
         if !original_text.is_empty() && s.text != original_text {

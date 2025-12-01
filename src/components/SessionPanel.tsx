@@ -30,6 +30,8 @@ import SaveIcon from "@mui/icons-material/Save";
 import TranslateIcon from "@mui/icons-material/Translate";
 import UndoIcon from "@mui/icons-material/Undo";
 import CompareArrowsIcon from "@mui/icons-material/CompareArrows";
+import PublishIcon from "@mui/icons-material/Publish";
+import FileDownloadIcon from "@mui/icons-material/FileDownload";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import type { PluginStringsResponse } from "../types";
@@ -43,7 +45,7 @@ import {
   showError,
   showInfo as showInfoNotification,
 } from "../stores/notificationStore";
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import {
   translateBatchWithAI,
   createCancellationToken,
@@ -103,6 +105,9 @@ const statusItemVariants = {
 
 const AI_TRANSLATION_CHUNK_SIZE = 50;
 
+const MAX_CACHE_ENTRIES = 200;
+const MAX_CACHE_TEXT_LENGTH = 200;
+
 const buildSessionSearchCache = (
   sessionId: string,
 ): Record<string, SearchResult> => {
@@ -110,34 +115,53 @@ const buildSessionSearchCache = (
     .getState()
     .openedSessions.get(sessionId);
 
-  const cache: Record<string, SearchResult> = {};
   if (!session) {
-    return cache;
+    return {};
   }
 
+  const uniqueEntries = new Map<string, SearchResult>();
   session.strings.forEach((record) => {
-    const status = record.translation_status || "untranslated";
-    const original = record.original_text?.trim();
-    const translated = record.translated_text?.trim();
-
     if (
-      !original ||
-      !translated ||
-      status === "untranslated" ||
-      status.length === 0
+      record.translation_status !== "ai" ||
+      !record.translated_text ||
+      !record.original_text
     ) {
       return;
     }
 
-    if (!cache[original]) {
-      cache[original] = {
-        status: "ok",
-        candidates: [{ en: original, zh: translated }],
-      };
+    const original = record.original_text.trim();
+    const translated = record.translated_text.trim();
+    if (!original || !translated || uniqueEntries.has(original)) {
+      return;
     }
+
+    const truncatedOriginal =
+      original.length > MAX_CACHE_TEXT_LENGTH
+        ? `${original.slice(0, MAX_CACHE_TEXT_LENGTH)}...`
+        : original;
+    const truncatedTranslated =
+      translated.length > MAX_CACHE_TEXT_LENGTH
+        ? `${translated.slice(0, MAX_CACHE_TEXT_LENGTH)}...`
+        : translated;
+
+    uniqueEntries.set(truncatedOriginal, {
+      status: "ok",
+      candidates: [{ en: truncatedOriginal, zh: truncatedTranslated }],
+    });
   });
 
-  return cache;
+  const limitedEntries = Array.from(uniqueEntries.entries()).slice(
+    0,
+    MAX_CACHE_ENTRIES,
+  );
+
+  return limitedEntries.reduce<Record<string, SearchResult>>(
+    (acc, [original, result]) => {
+      acc[original] = result;
+      return acc;
+    },
+    {},
+  );
 };
 
 interface SessionPanelProps {
@@ -218,6 +242,34 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
   const heartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
     null,
   );
+
+  const resetAiContext = useCallback(() => {
+    setIsAiTranslating(false);
+    setAiProgress(0);
+    setAiCompleted(0);
+    setAiTotal(0);
+    setStatusHistory([]);
+    setCurrentIteration(0);
+    setIsHeartbeatActive(false);
+    setAiStatus(null);
+    lastStatusTimeRef.current = Date.now();
+
+    if (heartbeatIntervalRef.current) {
+      clearInterval(heartbeatIntervalRef.current);
+      heartbeatIntervalRef.current = null;
+    }
+
+    cancellationTokenRef.current = null;
+  }, [
+    setIsAiTranslating,
+    setAiProgress,
+    setAiCompleted,
+    setAiTotal,
+    setStatusHistory,
+    setCurrentIteration,
+    setIsHeartbeatActive,
+    setAiStatus,
+  ]);
 
   // Replace 对话框状态
   const [replaceDialogOpen, setReplaceDialogOpen] = useState(false);
@@ -386,6 +438,8 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
       showError("请先在设置中配置API");
       return;
     }
+
+    resetAiContext();
 
     const selectedRowIds =
       useSessionStore.getState().selectedRows?.get(sessionData.session_id) ||
@@ -652,10 +706,7 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
     } catch (error) {
       showError("AI翻译失败: " + String(error));
     } finally {
-      setIsAiTranslating(false);
-      setAiProgress(0);
-      cancellationTokenRef.current = null;
-      setAiStatus(null);
+      resetAiContext();
     }
   };
 
@@ -867,44 +918,79 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
             </Tooltip>
           </Badge>
 
+          {/* 保存翻译到数据库 */}
           <Badge badgeContent={pendingCount} color="error" sx={{ ml: 1 }}>
-            <Button
-              size="small"
-              variant="contained"
-              color="secondary"
-              startIcon={<SaveIcon />}
-              onClick={handleSaveTranslations}
-              disabled={isSaving || pendingCount === 0}
-            >
-              {isSaving ? "保存中..." : "保存翻译"}
-            </Button>
+            <Tooltip title={isSaving ? "保存中..." : "保存翻译到数据库"}>
+              <span>
+                <IconButton
+                  size="small"
+                  color="secondary"
+                  onClick={handleSaveTranslations}
+                  disabled={isSaving || pendingCount === 0}
+                >
+                  <SaveIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
           </Badge>
 
-          {/* 应用到插件按钮 */}
-          <Button
-            size="small"
-            variant="contained"
-            color="success"
-            sx={{ ml: 1 }}
-            onClick={async () => {
-              if (useSessionStore.getState().applyTranslations) {
-                try {
-                  setIsSaving(true);
-                  await useSessionStore.getState().applyTranslations!(
-                    sessionData.session_id,
-                  );
-                  showSuccess("成功应用翻译到插件文件");
-                } catch (error) {
-                  showError("应用翻译失败: " + String(error));
-                } finally {
-                  setIsSaving(false);
-                }
-              }
-            }}
-            disabled={isSaving}
-          >
-            应用到插件
-          </Button>
+          {/* 应用翻译到插件文件 */}
+          <Tooltip title="应用翻译到插件文件">
+            <span>
+              <IconButton
+                size="small"
+                color="success"
+                sx={{ ml: 0.5 }}
+                onClick={async () => {
+                  if (useSessionStore.getState().applyTranslations) {
+                    try {
+                      setIsSaving(true);
+                      await useSessionStore.getState().applyTranslations!(
+                        sessionData.session_id,
+                      );
+                      showSuccess("成功应用翻译到插件文件");
+                    } catch (error) {
+                      showError("应用翻译失败: " + String(error));
+                    } finally {
+                      setIsSaving(false);
+                    }
+                  }
+                }}
+                disabled={isSaving}
+              >
+                <PublishIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+
+          {/* 导出 DSD 格式 */}
+          <Tooltip title="导出为 DSD 格式">
+            <span>
+              <IconButton
+                size="small"
+                color="info"
+                sx={{ ml: 0.5 }}
+                onClick={async () => {
+                  if (useSessionStore.getState().exportDsd) {
+                    try {
+                      setIsSaving(true);
+                      const savedPath = await useSessionStore.getState().exportDsd!(
+                        sessionData.session_id,
+                      );
+                      showSuccess(`DSD 已导出到: ${savedPath}`);
+                    } catch (error) {
+                      showError("导出 DSD 失败: " + String(error));
+                    } finally {
+                      setIsSaving(false);
+                    }
+                  }
+                }}
+                disabled={isSaving}
+              >
+                <FileDownloadIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
 
           <Tooltip title={showInfo ? "隐藏详情" : "查看插件详情"}>
             <IconButton size="small" onClick={() => setShowInfo(!showInfo)}>
