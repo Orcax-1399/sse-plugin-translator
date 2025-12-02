@@ -52,6 +52,20 @@ export default function CoverageSearchPanel() {
       grow: 1,
       size: 200,
       enableSorting: false,
+      Cell: ({ cell }) => (
+        <Box
+          component="span"
+          sx={{
+            display: "inline-block",
+            maxWidth: 360,
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {cell.getValue<string>()}
+        </Box>
+      ),
     },
     {
       header: "来源MOD",

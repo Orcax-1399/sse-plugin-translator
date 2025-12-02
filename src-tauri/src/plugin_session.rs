@@ -1,4 +1,5 @@
 use crate::bsa_logger::log_bsa_presence;
+use crate::dsd::{export_dsd_entries, load_dsd_overrides, make_record_key, DsdEntry};
 use esp_extractor::{DefaultEspWriter, ExtractedString, LoadedPlugin, PluginEditor};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -27,21 +28,13 @@ fn default_translation_status() -> String {
     "untranslated".to_string()
 }
 
-/// DSD (Dynamic String Distributor) 导出条目
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DsdEntry {
-    pub form_id: String,
-    #[serde(rename = "type")]
-    pub entry_type: String,
-    pub string: String,
-}
-
 /// 插件 Session（使用 Arc 共享数据，减少克隆开销）
 pub struct PluginSession {
     pub plugin_name: String,
     pub plugin_path: PathBuf,
     pub strings: Arc<Vec<StringRecord>>,
     pub loaded_at: Instant,
+    pub has_dsd_overrides: bool,
     // Store the loaded plugin to avoid reloading from disk
     // Wrapped in Option because we need to take ownership when applying translations
     pub loaded_plugin: Option<LoadedPlugin>,
@@ -64,6 +57,7 @@ pub struct PluginStringsResponse {
     pub plugin_path: String,
     pub strings: Vec<StringRecord>,
     pub total_count: usize,
+    pub has_dsd_overrides: bool,
 }
 
 /// Session 管理器
@@ -105,6 +99,7 @@ impl PluginSessionManager {
                 plugin_path: plugin_path.to_string_lossy().to_string(),
                 strings: (*session.strings).clone(), // 只在这里克隆一次
                 total_count: session.strings.len(),
+                has_dsd_overrides: session.has_dsd_overrides,
             });
         }
 
@@ -120,7 +115,7 @@ impl PluginSessionManager {
         println!("✓ 提取到 {} 条字符串", extracted.len());
 
         // 转换为 StringRecord
-        let strings: Vec<StringRecord> = extracted
+        let mut strings: Vec<StringRecord> = extracted
             .into_iter()
             .map(|s| StringRecord {
                 form_id: s.form_id,
@@ -134,6 +129,18 @@ impl PluginSessionManager {
             })
             .collect();
 
+        // 读取 DSD 覆盖（若存在）并套用（直接从插件目录旁的 SKSE/DynamicStringDistributor/<插件名>/ 中读取）
+        let mut has_dsd_overrides = false;
+        if let Some(overrides) = load_dsd_overrides(&plugin_path)? {
+            let applied = Self::apply_dsd_overrides_to_records(&mut strings, &overrides);
+            if applied > 0 {
+                has_dsd_overrides = true;
+                println!("✓ DSD 覆盖 {} 条记录", applied);
+            } else {
+                println!("⚠️ 检测到 DSD 目录但无匹配的条目");
+            }
+        }
+
         let total_count = strings.len();
 
         // ✅ 将 strings 包装在 Arc 中，支持共享
@@ -145,6 +152,7 @@ impl PluginSessionManager {
             plugin_path: plugin_path.clone(),
             strings: Arc::clone(&strings_arc),
             loaded_at: Instant::now(),
+            has_dsd_overrides,
             loaded_plugin: Some(loaded),
         };
 
@@ -158,6 +166,7 @@ impl PluginSessionManager {
             plugin_path: plugin_path.to_string_lossy().to_string(),
             strings: (*strings_arc).clone(), // 只在返回时克隆一次
             total_count,
+            has_dsd_overrides,
         })
     }
 
@@ -317,6 +326,25 @@ impl PluginSessionManager {
         Ok(target_path.to_string_lossy().to_string())
     }
 
+    /// DSD 覆盖应用到 Session 记录
+    fn apply_dsd_overrides_to_records(
+        records: &mut [StringRecord],
+        overrides: &HashMap<String, String>,
+    ) -> usize {
+        let mut applied = 0;
+        for record in records.iter_mut() {
+            let key = make_record_key(&record.form_id, &record.record_type, &record.subrecord_type);
+            if let Some(new_value) = overrides.get(&key) {
+                if record.translated_text != *new_value {
+                    record.translated_text = new_value.clone();
+                    record.translation_status = "manual".to_string();
+                    applied += 1;
+                }
+            }
+        }
+        applied
+    }
+
     /// 导出 DSD (Dynamic String Distributor) 格式的 JSON 文件
     ///
     /// # 参数
@@ -340,38 +368,6 @@ impl PluginSessionManager {
 
         let plugin_path = &session.plugin_path;
 
-        // 确定基础目录：优先使用自定义目录，否则使用源文件所在目录
-        let base_dir = if let Some(ref custom_dir) = output_base_dir {
-            PathBuf::from(custom_dir)
-        } else {
-            plugin_path
-                .parent()
-                .ok_or("无法获取插件所在目录")?
-                .to_path_buf()
-        };
-
-        // 获取插件名称（带扩展名，用于目录名）
-        let plugin_name_with_ext = &session.plugin_name;
-
-        // 获取插件名称（不带扩展名，用于文件名）
-        let plugin_name_without_ext = plugin_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .ok_or("无法获取插件名称")?;
-
-        // 构建输出目录：<base_dir>/SKSE/DynamicStringDistributor/<plugin_name>/
-        let output_dir = base_dir
-            .join("SKSE")
-            .join("DynamicStringDistributor")
-            .join(plugin_name_with_ext);
-
-        // 创建目录（如果不存在）
-        fs::create_dir_all(&output_dir)
-            .map_err(|e| format!("创建目录失败: {}", e))?;
-
-        // 构建输出文件路径
-        let output_file = output_dir.join(format!("{}.json", plugin_name_without_ext));
-
         // 转换为 DSD 格式
         let dsd_entries: Vec<DsdEntry> = records
             .into_iter()
@@ -382,13 +378,14 @@ impl PluginSessionManager {
             })
             .collect();
 
-        // 序列化为 JSON
-        let json = serde_json::to_string_pretty(&dsd_entries)
-            .map_err(|e| format!("序列化 JSON 失败: {}", e))?;
-
-        // 写入文件
-        fs::write(&output_file, json)
-            .map_err(|e| format!("写入文件失败: {}", e))?;
+        let base_dir_override = output_base_dir
+            .as_ref()
+            .map(PathBuf::from);
+        let output_file = export_dsd_entries(
+            plugin_path,
+            &dsd_entries,
+            base_dir_override.as_deref(),
+        )?;
 
         println!("✓ DSD 导出成功: {:?}", output_file);
 

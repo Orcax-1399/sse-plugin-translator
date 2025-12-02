@@ -825,6 +825,14 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
             )}
           </Typography>
 
+          <Chip
+            size="small"
+            label={sessionData.has_dsd_overrides ? "esp/dsd" : "esp"}
+            color={sessionData.has_dsd_overrides ? "secondary" : "default"}
+            variant={sessionData.has_dsd_overrides ? "filled" : "outlined"}
+            sx={{ mx: 1 }}
+          />
+
           {/* 筛选Chips */}
           <Box sx={{ display: "flex", gap: 0.5, ml: 2 }}>
             <Chip

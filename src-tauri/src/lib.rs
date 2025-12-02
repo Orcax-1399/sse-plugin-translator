@@ -4,6 +4,7 @@ mod bsa_logger;
 mod commands;
 mod constants;
 mod coverage_db;
+mod dsd;
 mod esp_service;
 mod plugin_session;
 mod scanner;

@@ -1,7 +1,10 @@
 use crate::coverage_db::{CoverageDB, CoverageEntry, LoadOrderEntry};
+use crate::dsd::{load_dsd_overrides, make_record_key};
 use crate::esp_service::extract_plugin_strings;
 use crate::scanner::PluginInfo;
+use crate::translation_db::Translation;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -40,7 +43,28 @@ fn now_ts() -> i64 {
         .as_secs() as i64
 }
 
-/// 按 load order 依次解包并写入覆盖关系数据库
+fn apply_dsd_overrides_to_translations(
+    translations: &mut [Translation],
+    overrides: &HashMap<String, String>,
+) -> usize {
+    let mut applied = 0;
+    for translation in translations.iter_mut() {
+        let key = make_record_key(
+            &translation.form_id,
+            &translation.record_type,
+            &translation.subrecord_type,
+        );
+        if let Some(new_value) = overrides.get(&key) {
+            if translation.translated_text != *new_value {
+                translation.translated_text = new_value.clone();
+                applied += 1;
+            }
+        }
+    }
+    applied
+}
+
+/// 按 load order 依次解包并写入覆盖关系数据库，并在提取后套用 DSD JSON 覆盖
 pub fn extract_and_store<F>(
     coverage_db: &CoverageDB,
     plugins: &[PluginInfo],
@@ -65,7 +89,15 @@ where
         });
         let path = Path::new(&plugin.path);
         match extract_plugin_strings(path) {
-            Ok(translations) => {
+            Ok(mut translations) => {
+                if let Some(overrides) = load_dsd_overrides(path)? {
+                    let applied =
+                        apply_dsd_overrides_to_translations(&mut translations, &overrides);
+                    if applied > 0 {
+                        println!("✓ {} 套用 {} 条 DSD 覆盖", plugin.name, applied);
+                    }
+                }
+
                 let load_order_pos = idx as i64;
                 let entries: Vec<CoverageEntry> = translations
                     .into_iter()

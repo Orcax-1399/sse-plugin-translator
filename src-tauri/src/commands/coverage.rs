@@ -189,6 +189,7 @@ pub async fn run_coverage_extraction(
 
     // 克隆 Arc 以便在后台任务中使用
     let db_arc = coverage_db.inner().clone();
+    let plugins_for_task = plugins;
 
     // 启动后台任务
     tauri::async_runtime::spawn(async move {
@@ -216,7 +217,7 @@ pub async fn run_coverage_extraction(
             };
 
             // 执行提取
-            let stats_result = extract_and_store(&db, &plugins, callback);
+            let stats_result = extract_and_store(&db, &plugins_for_task, callback);
 
             // 发送完成事件
             match stats_result {

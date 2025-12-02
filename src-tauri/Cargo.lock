@@ -3860,7 +3860,7 @@ dependencies = [
 
 [[package]]
 name = "sse-plugin-translator"
-version = "0.1.0"
+version = "0.7.8"
 dependencies = [
  "aho-corasick",
  "chrono",

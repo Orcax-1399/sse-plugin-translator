@@ -151,6 +151,8 @@ export interface PluginStringsResponse {
   strings: StringRecord[];
   /** 总数 */
   total_count: number;
+  /** 是否检测到并应用 DSD 覆盖 */
+  has_dsd_overrides: boolean;
 }
 
 /**

@@ -1,7 +1,7 @@
 {
   "name": "sse-plugin-translator",
   "private": true,
-  "version": "0.7.2",
+  "version": "0.7.8",
   "type": "module",
   "scripts": {
     "dev": "vite",

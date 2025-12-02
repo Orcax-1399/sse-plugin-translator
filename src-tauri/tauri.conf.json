@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "sse-plugin-translator",
-  "version": "0.7.0",
+  "version": "0.7.8",
   "identifier": "com.orcax.sse-plugin-translator",
   "build": {
     "beforeDevCommand": "pnpm dev",
