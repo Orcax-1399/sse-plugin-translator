@@ -393,10 +393,28 @@ impl TranslationDB {
     /// # 返回
     /// 按原文长度排序（从短到长）的翻译记录
     pub fn query_by_text(&self, text: &str, limit: usize) -> Result<Vec<Translation>> {
-        let conn = self.conn.lock().unwrap();
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
 
-        // 构造LIKE模糊查询参数（小写 + 通配符）
-        let search_pattern = format!("%{}%", text.to_lowercase());
+        let keyword = text.trim();
+        if keyword.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let is_ascii_word = keyword
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric());
+        let lowered_keyword = keyword.to_ascii_lowercase();
+
+        let fetch_limit = if is_ascii_word {
+            limit.saturating_mul(5).max(limit)
+        } else {
+            limit
+        };
+
+        let conn = self.conn.lock().unwrap();
+        let search_pattern = format!("%{}%", lowered_keyword);
 
         let mut stmt = conn.prepare(
             "SELECT form_id, record_type, subrecord_type, \"index\", editor_id, original_text,
@@ -407,8 +425,8 @@ impl TranslationDB {
              LIMIT ?2",
         )?;
 
-        let translations = stmt
-            .query_map(params![search_pattern, limit as i64], |row| {
+        let rows = stmt
+            .query_map(params![search_pattern, fetch_limit as i64], |row| {
                 Ok(Translation {
                     form_id: row.get(0)?,
                     record_type: row.get(1)?,
@@ -424,8 +442,28 @@ impl TranslationDB {
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(translations)
+        if !is_ascii_word {
+            return Ok(rows.into_iter().take(limit).collect());
+        }
+
+        let mut filtered = Vec::with_capacity(limit);
+        for translation in rows {
+            if contains_ascii_token(&translation.original_text, &lowered_keyword) {
+                filtered.push(translation);
+                if filtered.len() >= limit {
+                    break;
+                }
+            }
+        }
+
+        Ok(filtered)
     }
+}
+
+fn contains_ascii_token(original: &str, keyword_lower: &str) -> bool {
+    original
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|token| !token.is_empty() && token.eq_ignore_ascii_case(keyword_lower))
 }
 
 #[cfg(test)]
@@ -480,5 +518,75 @@ mod tests {
         assert_eq!(stats.total_count, 1);
 
         Ok(())
+    }
+
+    #[test]
+    fn query_by_text_filters_ascii_word_false_positives() -> Result<()> {
+        let db = TranslationDB::new(":memory:".into())?;
+
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let loa = Translation {
+            form_id: "00000001|Test.esm".to_string(),
+            record_type: "MISC".to_string(),
+            subrecord_type: "FULL".to_string(),
+            index: 0,
+            editor_id: None,
+            original_text: "LoA".to_string(),
+            translated_text: "Lost of Ark".to_string(),
+            plugin_name: Some("Test.esm".to_string()),
+            created_at: now,
+            updated_at: now,
+        };
+
+        let float = Translation {
+            form_id: "00000002|Test.esm".to_string(),
+            record_type: "MISC".to_string(),
+            subrecord_type: "FULL".to_string(),
+            index: 0,
+            editor_id: None,
+            original_text: "Float".to_string(),
+            translated_text: "漂浮".to_string(),
+            plugin_name: Some("Test.esm".to_string()),
+            created_at: now,
+            updated_at: now,
+        };
+
+        let korean_name = Translation {
+            form_id: "00000003|Test.esm".to_string(),
+            record_type: "MISC".to_string(),
+            subrecord_type: "FULL".to_string(),
+            index: 0,
+            editor_id: None,
+            original_text: "엘렌".to_string(),
+            translated_text: "Elen".to_string(),
+            plugin_name: Some("Test.esm".to_string()),
+            created_at: now,
+            updated_at: now,
+        };
+
+        db.save_translation(loa)?;
+        db.save_translation(float)?;
+        db.save_translation(korean_name)?;
+
+        let results = db.query_by_text("LoA", 5)?;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].original_text, "LoA");
+
+        // 包含非 ASCII 字符时仍可模糊匹配
+        let results = db.query_by_text("엘", 5)?;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].original_text, "엘렌");
+
+        Ok(())
+    }
+
+    #[test]
+    fn contains_ascii_token_matches_exact_word() {
+        assert!(contains_ascii_token("LoA", "loa"));
+        assert!(!contains_ascii_token("Float", "loa"));
     }
 }
