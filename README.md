@@ -6,7 +6,7 @@
 
 ## 项目亮点
 - **多 Session 工作区 + 持久化路径**：一次设定游戏目录即可自动记住，工作区默认 1280×800 视口，支持多插件并行、Tab 切换、未保存提示与一键清空工作区配置。
-- **DSD 全流程**：Session 面板新增导出入口，可配置 DSD 输出目录并实时看见覆盖指示；导出路径统一为 `<base>/skse/DynamicStringDistributor/<mod>/<mod>.json`，成功后自动标记为手动翻译。
+- **DSD 全流程**：Session 面板新增导出入口，可配置 DSD 输出目录并实时看见覆盖指示；导出路径统一为 `<base>/skse/Plugins/DynamicStringDistributor/<mod>/<mod>.json`，成功后自动标记为手动翻译。
 - **覆盖数据库 2.0**：刷新前自动清空旧条目，遵循最新 load order 批量套用 DSD 覆盖；覆盖面板同步展示 DSD override 状态与列宽限制，便于快速定位冲突。
 - **AI 批量翻译引擎**：内置 OpenAI/MCP 兼容工作流，按预算动态分配 search/apply 工具调用，可立即取消，预算耗尽时自动引导手动 apply/skip；原子词典用于预处理术语。
 - **Material React Table UI**：核心表格迁移至 MRT + TanStack React Table，提供轻量虚拟滚动、统一 ellipsis 展示与更灵活的行样式；操作按钮图标化并联动 DSD/覆盖状态。
@@ -40,7 +40,7 @@
    - 在“设置 → AI 配置”面板中添加/激活 API（OpenAI 兼容接口），填写 `endpoint / apiKey / modelName / maxTokens` 等信息。
    - ⚠️ 当前 AI 翻译假定模型支持工具调用（function calling/MCP）。若仅返回纯文本，将无法驱动 search/apply，需切换模型或供应商。
 4. **设定 DSD 输出目录（可选）**
-   - 通过 Workspace 顶栏选择 DSD 导出目录；不设置时默认写回插件同级 `SKSE/DynamicStringDistributor/<mod>/`。
+   - 通过 Workspace 顶栏选择 DSD 导出目录；不设置时默认写回插件同级 `SKSE/Plugins/DynamicStringDistributor/<mod>/`。
    - 导出成功会弹出路径并在 Session 列表里打钩，覆盖视图也会显示 override 标签。
 5. **导入基础词典（可选）**
    - 选择官方汉化插件所在目录，执行“双语提取”建立初始翻译对照，后续 AI/批量导出会优先引用这些译文。
@@ -78,7 +78,7 @@
 - `atomic_db.rs`：SQLite + HashMap + Aho-Corasick，支持术语增删、匹配、使用次数统计与异步刷新，AI 运行前自动替换术语。
 
 ### DSD 管道
-- `dsd.rs`：定义 DSD JSON 结构，负责检测 DSD 目录、载入覆盖、构建导出路径并写入 `<base>/skse/DynamicStringDistributor/<mod>/<mod>.json`。
+- `dsd.rs`：定义 DSD JSON 结构，负责检测 DSD 目录、载入覆盖、构建导出路径并写入 `<base>/skse/Plugins/DynamicStringDistributor/<mod>/<mod>.json`。
 - `plugin_session.rs`：加载 Session 时套用 DSD 覆盖、提供 `export_dsd_json`，日志中标记成功条目数；覆盖提取完成后也会套用 DSD JSON 以保持 UI 与游戏一致。
 - `settings.rs` + `appStore.ts`：新增 `dsd_output_dir` 字段与 `clear_game_path` 命令，用户可在 UI 中设置/清除。
 
@@ -120,7 +120,7 @@
 1. **覆盖提取提示缺少 loadorder.txt？**  
    请先在 Mod 管理器（MO2/Vortex 等）导出加载顺序，再在设置中指定同一游戏目录。覆盖刷新会使用最新快照并自动清空旧数据库。
 2. **DSD 覆盖提示是什么？**  
-   Session 若检测到 `<base>/skse/DynamicStringDistributor/<mod>/` 下的 JSON，会在面板与覆盖窗口显示 DSD 图标/Badge；导出行为也会重新计算覆盖状态。
+   Session 若检测到 `<base>/skse/Plugins/DynamicStringDistributor/<mod>/` 下的 JSON，会在面板与覆盖窗口显示 DSD 图标/Badge；导出行为也会重新计算覆盖状态。
 3. **AI 翻译无响应或频繁失败？**  
    检查 API 是否激活、模型名是否正确，确认服务端支持工具调用，并关注日志中的 `budget exhausted`、`tool call missing` 等提示。可在“搜索历史”窗口查看 AI 调用记录。
 4. **是否兼容纯文本类 AI 模型？**  

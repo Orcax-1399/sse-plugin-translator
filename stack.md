@@ -68,7 +68,7 @@ SSE Plugin Translator —— 面向 Bethesda 系列插件的桌面翻译工作�
 - **rayon** `1.x`
   - 并行遍历插件、覆盖提取与 DSD JSON 应用。
 - **walkdir** `2.x`
-  - 扫描 Data 目录与 SKSE/DynamicStringDistributor 目录。
+  - 扫描 Data 目录与 SKSE/Plugins/DynamicStringDistributor 目录。
 - **tokio** `1.48.0`
   - 处理定时任务与异步事件（如 coverage progress）。
 - **chrono / directories / serde / serde_json**
@@ -77,7 +77,7 @@ SSE Plugin Translator —— 面向 Bethesda 系列插件的桌面翻译工作�
 ### 重要模块
 - `translation_db.rs`：对 `translations` 表进行 UPSERT/批量查询，保护原文字段。
 - `plugin_session.rs`：Session 生命周期、DSD 覆盖套用、DSD 导出命令。
-- `dsd.rs`：定义 JSON 结构，解析/导出 `<base>/skse/DynamicStringDistributor/<mod>/<mod>.json`。
+- `dsd.rs`：定义 JSON 结构，解析/导出 `<base>/skse/Plugins/DynamicStringDistributor/<mod>/<mod>.json`。
 - `coverage_db.rs` + `utils::load_order.rs`：覆盖数据库 + loadorder 解析，`clear_entries()` 确保刷新前清库。
 - `commands::settings`：游戏路径、DSD 导出目录、`clear_game_path()`。
 - `commands::coverage`、`commands::session` 等按职责拆分。

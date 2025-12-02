@@ -1,5 +1,5 @@
-import { useMemo, memo, useCallback } from 'react';
-import { MaterialReactTable, type MRT_ColumnDef } from 'material-react-table';
+import { useMemo, memo, useCallback, useRef, type MouseEvent } from 'react';
+import { MaterialReactTable, type MRT_ColumnDef, type MRT_Row, type MRT_TableInstance } from 'material-react-table';
 import type { PaginationState, RowSelectionState, Updater } from '@tanstack/react-table';
 import { Box } from '@mui/material';
 import { invoke } from '@tauri-apps/api/core';
@@ -121,6 +121,57 @@ const StringTable = memo(function StringTable({ rows, sessionId, paginationModel
     [paginationState, onPaginationModelChange],
   );
 
+  const lastClickedRowRef = useRef<{ sessionId?: string; rowIndex: number } | null>(null);
+
+  const handleRowClick = useCallback(
+    (event: MouseEvent, row: MRT_Row<StringRecord>, table: MRT_TableInstance<StringRecord>) => {
+      if (!sessionId || !setSelectedRows) {
+        return;
+      }
+
+      const targetElement = event.target as HTMLElement | null;
+      if (targetElement?.closest('[role=\"checkbox\"],button')) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const anchor = lastClickedRowRef.current;
+      const preserveExisting = event.ctrlKey || event.metaKey;
+      let nextSet = preserveExisting ? new Set(selectedSet) : new Set<string>();
+
+      if (event.shiftKey && anchor && anchor.sessionId === sessionId) {
+        const tableRows = table.getRowModel().rows;
+        const start = Math.min(anchor.rowIndex, row.index);
+        const end = Math.max(anchor.rowIndex, row.index);
+        if (!preserveExisting) {
+          nextSet = new Set<string>();
+        }
+        for (let i = start; i <= end; i += 1) {
+          const targetRow = tableRows[i];
+          if (targetRow) {
+            nextSet.add(targetRow.id);
+          }
+        }
+      } else {
+        const rowId = row.id;
+        if (preserveExisting && nextSet.has(rowId)) {
+          nextSet.delete(rowId);
+        } else {
+          if (!preserveExisting) {
+            nextSet.clear();
+          }
+          nextSet.add(rowId);
+        }
+      }
+
+      lastClickedRowRef.current = { sessionId, rowIndex: row.index };
+      setSelectedRows(sessionId, nextSet);
+    },
+    [selectedSet, sessionId, setSelectedRows],
+  );
+
   const getRowStyle = useCallback((row: StringRecord) => {
     switch (row.translation_status) {
       case 'untranslated':
@@ -199,7 +250,8 @@ const StringTable = memo(function StringTable({ rows, sessionId, paginationModel
             maxWidth: '100%',
           },
         }}
-        muiTableBodyRowProps={({ row }) => ({
+        muiTableBodyRowProps={({ row, table }) => ({
+          onClick: (event) => handleRowClick(event, row, table),
           onDoubleClick: () => handleRowDoubleClick(row.original as StringRecord),
           sx: {
             cursor: 'pointer',

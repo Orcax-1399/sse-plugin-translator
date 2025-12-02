@@ -129,7 +129,7 @@ impl PluginSessionManager {
             })
             .collect();
 
-        // 读取 DSD 覆盖（若存在）并套用（直接从插件目录旁的 SKSE/DynamicStringDistributor/<插件名>/ 中读取）
+        // 读取 DSD 覆盖（若存在）并套用（直接从插件目录旁的 SKSE/Plugins/DynamicStringDistributor/<插件名>/ 中读取）
         let mut has_dsd_overrides = false;
         if let Some(overrides) = load_dsd_overrides(&plugin_path)? {
             let applied = Self::apply_dsd_overrides_to_records(&mut strings, &overrides);

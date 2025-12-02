@@ -15,7 +15,7 @@ pub struct DsdEntry {
 
 /// 按约定构建 DSD JSON 文件路径
 ///
-/// - 当 `base_dir_override` 存在时：`<base_dir_override>/SKSE/DynamicStringDistributor/<plugin_filename>/<plugin_stem>.json`
+/// - 当 `base_dir_override` 存在时：`<base_dir_override>/SKSE/Plugins/DynamicStringDistributor/<plugin_filename>/<plugin_stem>.json`
 /// - 否则：使用插件所在目录作为 base dir
 pub fn build_dsd_json_path(
     plugin_path: &Path,
@@ -41,12 +41,13 @@ pub fn build_dsd_json_path(
 
     Ok(base_dir
         .join("SKSE")
+        .join("Plugins")
         .join("DynamicStringDistributor")
         .join(plugin_name_with_ext)
         .join(format!("{}.json", plugin_name_without_ext)))
 }
 
-/// 载入 DSD JSON 覆盖内容（若存在）。MO2 环境下直接读取插件所在目录旁的 SKSE/DynamicStringDistributor/<插件名>/ 下的所有 JSON。
+/// 载入 DSD JSON 覆盖内容（若存在）。MO2 环境下直接读取插件所在目录旁的 SKSE/Plugins/DynamicStringDistributor/<插件名>/ 下的所有 JSON。
 pub fn load_dsd_overrides(plugin_path: &Path) -> Result<Option<HashMap<String, String>>, String> {
     let plugin_dir = plugin_path
         .parent()
@@ -58,6 +59,7 @@ pub fn load_dsd_overrides(plugin_path: &Path) -> Result<Option<HashMap<String, S
 
     let dsd_dir = plugin_dir
         .join("SKSE")
+        .join("Plugins")
         .join("DynamicStringDistributor")
         .join(plugin_name_with_ext);
 

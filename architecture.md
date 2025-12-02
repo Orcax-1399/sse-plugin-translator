@@ -44,8 +44,8 @@ pub fn load_session(&self, plugin: &PluginDescriptor) -> Result<LoadedSession, S
 pub fn apply_dsd_overrides(&self, session: &mut LoadedSession, dsd_dir: &Path) -> Result<usize, String>;
 pub fn export_dsd_json(&self, payload: ExportDsdPayload) -> Result<PathBuf, String>;
 ```
-- 加载时会调用 `dsd::load_overrides()` 读取 `<plugin_dir>/SKSE/DynamicStringDistributor/<mod>/` 下的 JSON，贴合 Session 列表。
-- 导出 DSD 时，统一写入 `<base>/skse/DynamicStringDistributor/<mod>/<mod>.json`，并返回最终路径给前端。
+- 加载时会调用 `dsd::load_overrides()` 读取 `<plugin_dir>/SKSE/Plugins/DynamicStringDistributor/<mod>/` 下的 JSON，贴合 Session 列表。
+- 导出 DSD 时，统一写入 `<base>/skse/Plugins/DynamicStringDistributor/<mod>/<mod>.json`，并返回最终路径给前端。
 
 ### dsd.rs
 - 负责 DSD JSON 结构、路径推导与文件 I/O。
