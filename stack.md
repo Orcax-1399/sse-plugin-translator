@@ -1,98 +1,52 @@
 # 技术选型文档 (Technology Stack)
 
 ## 项目概述
-游戏Mod翻译器 - 用于扫描和翻译游戏插件文件的桌面应用程序
+SSE Plugin Translator —— 面向 Bethesda 系列插件的桌面翻译工作台。React + Vite 构建的前端负责编辑体验，Tauri + Rust 负责 ESP 解析、SQLite 操作与 DSD/覆盖工具链。
 
 ---
 
 ## 前端技术栈
 
 ### 核心框架
-- **React** `19.1.0`
-  - 最新版本，提供现代化的组件开发体验
-  - 支持并发特性和自动批处理优化
+- **React** `^19.1.0` + **TypeScript** `~5.8.3` + **Vite** `^7.0.4`
+  - 支持并发特性与自动批处理，配合 Vite HMR 提供毫秒级反馈。
+  - TypeScript 保证 store/command/tauri 调用签名一致性。
 
-- **TypeScript** `~5.8.3`
-  - 强类型支持，提升代码可维护性
-  - 完整的IDE智能提示
+### 状态与不可变更新
+- **Zustand** `^5.0.8`
+  - 每个 store 独立 slice，支持选择性订阅，局部刷新。
+  - `sessionStore`/`appStore`/`coverageStore` 等共享 `immer` 生产者以避免深拷贝。
+- **Immer** `^10.2.0`
+  - 结构共享 + Draft 写法，大幅降低 10w+ 行表格的内存峰值。
 
-- **Vite** `^7.0.4`
-  - 极速的开发服务器和HMR
-  - 优化的生产构建
+### UI / 表格
+- **Material UI (MUI)** `^7.3.5`
+  - 全局主题、弹窗、布局与图标（`@mui/icons-material`）。
+- **Material React Table (MRT)** `^3.2.1` + **@tanstack/react-table** `^8.21.3`
+  - 取代 DataGrid，提供轻量数据表、列/行虚拟化、全局 ellipsis 样式。
+  - Session 表格、Coverage 搜索、AtomDb 面板等均共享同一配置，行操作按钮图标化。
+- **CodeMirror 6** (`@uiw/react-codemirror` + `@codemirror/lang-*`)
+  - 负责独立编辑窗口与 Prompt 预览。
 
-### UI框架
-- **Material-UI (MUI)** `latest`
-  - 成熟的React组件库
-  - 开箱即用的Material Design风格
-  - 丰富的组件生态（Drawer, List, TextField等）
-  - 内置响应式和主题系统
+### 路由与动画
+- **react-router-dom** `^7.9.5` 用于 GamePathSelector ↔ Workspace / 子窗口导航。
+- **framer-motion** `^12.23.24` 提供细节动效（Tab 切换、空态等）。
 
-**选型理由**：
-- ✅ 组件完整度高，减少自定义开发
-- ✅ 文档完善，学习曲线平缓
-- ✅ 社区活跃，长期维护
-- ✅ 适合桌面应用的复杂布局需求
+### AI & API 交互
+- **openai** `^6.9.0` + **ai** `^5.0.93`
+  - 构建兼容 OpenAI/MCP 的工具调用请求，封装流式响应与取消控制。
+  - 自定工具（search/apply_translations）通过 `ai` 包的工具路由实现。
 
-### 路由管理
-- **react-router-dom** `latest`
-  - React生态标准路由方案
-  - 声明式路由配置
-  - 支持懒加载和代码分割
-
-**路由设计**：
-```
-/ - 首屏（游戏目录选择）
-/workspace - 主工作界面
-```
-
-### 状态管理
-- **Zustand** `latest`
-  - 轻量级状态管理库（~1KB）
-  - API简洁，无样板代码
-  - 原生TypeScript支持
-  - 性能优异，支持选择性订阅
-
-**选型理由**：
-- ✅ 相比Redux更简单直观
-- ✅ 相比Context API性能更好
-- ✅ 适合中小型应用的状态管理需求
-- ✅ 学习成本低，易于团队协作
-
-**状态模块划分**：
+### 状态模块划分
 | Store | 职责 | 持久化 |
 |-------|------|--------|
-| appStore | 全局应用状态（gamePath, plugins） | settings.json |
-| sessionStore | Session管理和翻译数据 | translations.db |
-| translationStore | 翻译数据库操作封装 | translations.db |
-| notificationStore | 通知系统 | 无 |
-| apiConfigStore | AI配置管理 | api.db |
-| historyStore | 历史记录（撤销功能） | 内存 |
-
-### 历史记录系统
-- **实现方式**：Zustand + 内存FIFO队列
-- **设计模式**：Command Pattern（命令模式）
-- **核心特点**：
-  - Session隔离：不同插件独立历史栈
-  - FIFO限制：最多30条命令，防止内存溢出
-  - 批量支持：单条命令可包含多条记录（如AI翻译100条）
-  - 深拷贝：使用 `structuredClone()` 保存状态快照
-
-**未来扩展预留**：
-- 持久化历史（SQLite存储）
-- Redo功能（重做栈）
-- 历史记录浏览器
-
-### 不可变更新
-- **Immer** `10.2.0`
-  - 现代化的不可变状态管理库
-  - 使用 `produce()` API 简化复杂对象更新
-  - 内置结构共享优化
-  - 显著减少内存占用（大数据集场景）
-
-**应用场景**：
-- ✅ Session 数据更新（12万+条记录）
-- ✅ 批量翻译应用（避免数组深拷贝）
-- ✅ 内存优化（节省60-70%内存占用）
+| `appStore` | 游戏路径、DSD 导出目录、窗口布局/设置加载 | settings.json + localStorage |
+| `sessionStore` | Session 管理、翻译数据、DSD 覆盖标记、批量保存 | translations.db |
+| `translationStore` | 翻译数据库 RPC 封装 | translations.db |
+| `historyStore` | per-session 撤销栈（FIFO 30 条） | 内存 |
+| `apiConfigStore` | AI 配置 CRUD、当前激活项 | api.db |
+| `coverageStore` | 覆盖快照状态、提取进度、搜索结果、DSD override | coverage.db |
+| `notificationStore` | 全局 Snackbar/Toast | 内存 |
 
 ---
 
@@ -100,152 +54,82 @@
 
 ### 核心框架
 - **Tauri** `2.x`
-  - 现代化的跨平台桌面应用框架
-  - 使用系统WebView，体积小巧
-  - 安全的前后端通信机制
-  - 原生文件系统访问能力
-
+  - 调用系统 WebView，暴露 Rust 命令给前端，包含 `plugin-dialog`/`plugin-opener` 插件用于目录选择 & 打开外部资源。
 - **Rust** `2021 Edition`
-  - 内存安全，无运行时开销
-  - 出色的并发性能
-  - 丰富的系统编程能力
+  - 提供零成本并发与内存安全；所有命令模块按功能拆分（settings/session/coverage/dsd/...）。
 
-### Rust依赖库
-
-#### 核心依赖
-- **serde** `1.x` & **serde_json** `1.x`
-  - JSON序列化/反序列化
-  - 用于settings.json配置文件处理
-  - 与前端数据交互
-
-- **walkdir** `2.x`
-  - 递归目录遍历
-  - 用于扫描游戏Data目录下的插件文件
-  - 高效的文件系统操作
-
-- **directories** `5.x`
-  - 跨平台路径获取
-  - 获取应用可执行文件路径
-  - 用于settings.json存储位置定位
-
-- **rusqlite** `0.32`
-  - SQLite数据库驱动
-  - 翻译数据持久化存储
-  - WAL模式支持并发读写
-
-- **esp_extractor** `0.5.2`
-  - ESP/ESM/ESL文件解析
-  - 26倍性能提升（v0.5.2）
-  - 支持双语提取
-
+### 关键依赖
+- **esp_extractor** `0.6.0`
+  - 支持 SSE/AE 插件解析，输出结构化字符串记录，配合 Rayon 并行提取。
+- **rusqlite** `0.32` (bundled)
+  - 统一管理 translations/atomic/coverage/api DB；采用 WAL 模式保证并发读写。
 - **aho-corasick** `1.1`
-  - 多模式字符串匹配算法
-  - 用于原子数据库术语替换
-  - O(n+m)复杂度，高效匹配10000+模式
-
+  - 为原子数据库构建多模式匹配器，实现 AI 前置术语替换。
 - **rayon** `1.x`
-  - 并行计算框架
-  - 多核批量操作加速
-
+  - 并行遍历插件、覆盖提取与 DSD JSON 应用。
+- **walkdir** `2.x`
+  - 扫描 Data 目录与 SKSE/DynamicStringDistributor 目录。
 - **tokio** `1.48.0`
-  - 异步运行时
-  - 用于异步事件处理
+  - 处理定时任务与异步事件（如 coverage progress）。
+- **chrono / directories / serde / serde_json**
+  - 时间戳、路径、序列化/反序列化辅助。
 
-#### Tauri插件
-- **tauri-plugin-opener** `2.x`
-  - 打开外部链接和文件（预留功能）
-
----
-
-## 构建工具链
-
-### 前端构建
-- **Vite** - 开发服务器和生产构建
-- **TypeScript Compiler** - 类型检查
-- **@vitejs/plugin-react** - React Fast Refresh支持
-
-### 后端构建
-- **Cargo** - Rust包管理和构建系统
-- **tauri-cli** - Tauri应用打包工具
-
-### 包管理器
-- **pnpm** - 快速、节省磁盘空间的包管理器
+### 重要模块
+- `translation_db.rs`：对 `translations` 表进行 UPSERT/批量查询，保护原文字段。
+- `plugin_session.rs`：Session 生命周期、DSD 覆盖套用、DSD 导出命令。
+- `dsd.rs`：定义 JSON 结构，解析/导出 `<base>/skse/DynamicStringDistributor/<mod>/<mod>.json`。
+- `coverage_db.rs` + `utils::load_order.rs`：覆盖数据库 + loadorder 解析，`clear_entries()` 确保刷新前清库。
+- `commands::settings`：游戏路径、DSD 导出目录、`clear_game_path()`。
+- `commands::coverage`、`commands::session` 等按职责拆分。
 
 ---
 
-## 开发规范
+## 构建与工具链
 
-### 代码风格
-- **前端**：遵循React Hooks最佳实践
-- **后端**：遵循Rust官方代码风格（rustfmt）
+- **pnpm** - 管理 Node 依赖与 Tauri CLI。
+- **Vite** - 前端 dev server 与生产构建。
+- **TypeScript Compiler (tsc)** - 独立类型检查。
+- **Cargo** - Rust 构建与依赖管理。
+- **tauri-cli** - `pnpm tauri dev/build` 入口，负责多目标打包。
 
-### 文件组织
+---
+
+## 数据流概要
+
 ```
-src/
-├── components/     # React组件
-├── pages/          # 页面组件
-├── stores/         # Zustand状态管理
-├── types/          # TypeScript类型定义
-└── utils/          # 工具函数
-
-src-tauri/src/
-├── main.rs         # 应用入口
-├── lib.rs          # Tauri命令注册
-├── settings.rs     # 配置管理模块
-└── scanner.rs      # 插件扫描模块
+React (Zustand actions)
+   ↕ invoke/emit
+Tauri (Rust commands + events)
+   ↕
+SQLite / DSD JSON / loadorder.txt / Data 目录
 ```
 
----
-
-## 数据流设计
-
-### 前后端通信
-```
-前端 (React)
-    ↕ invoke/emit
-后端 (Rust)
-    ↕ 文件系统
-本地文件 (settings.json, *.esp/esm/esl)
-```
-
-### 状态管理流
-```
-用户操作 → Zustand Action → Tauri Command → Rust处理 → 返回结果 → 更新Store → UI重渲染
-```
+1. **游戏目录**：`appStore.loadSettings()` 调用 `get_settings`，Rust 端读取 settings.json 并返回 `game_path` + `dsd_output_dir`；Workspace 顶栏允许 `set_game_path`/`clear_game_path`。
+2. **Session 加载**：`sessionStore.openSession()` → `plugin_session::load` → esp_extractor 抽取 → DSD JSON 覆盖 → 返回字符串数组 + DSD 状态。
+3. **AI 批翻**：前端构造工具调用请求 → Rust 不参与 → 结果回写表格并触发历史命令。
+4. **覆盖提取**：`run_coverage_extraction` 先 `CoverageDB::clear_entries()`，再按 load order 解包并应用 DSD JSON，event 传回进度。
+5. **DSD 导出**：`sessionStore.exportDsd()` → `commands::session::export_dsd` → `dsd::export_dsd_json()` 以配置路径写出 JSON，返回最终路径给 UI。
 
 ---
 
-## 性能考量
+## 性能与用户体验
 
-1. **插件扫描**：使用Rust异步I/O，避免阻塞UI
-2. **列表渲染**：MUI DataGrid 虚拟滚动，支持12万+条数据流畅显示
-3. **搜索过滤**：前端内存过滤，响应迅速
-4. **配置读写**：缓存在Zustand store，减少磁盘I/O
-5. **内存优化**：
-   - 使用 Immer 避免大数组深拷贝（节省60-70%内存）
-   - React.memo + key 优化组件缓存清理
-   - 显式资源释放（Map.clear() + finally 块）
-   - 大文件场景内存峰值优化（9-10GB → 3-4GB）
+- **虚拟化表格**：MRT + TanStack 提供虚拟滚动和列裁剪，改善 10w+ 行渲染。
+- **批量命令**：翻译/覆盖查询采用分页、批量写入（事务）减少锁竞争。
+- **DSD 覆盖标记**：加载/导出即时更新 stores，Workspace 顶栏实时显示状态。
+- **可撤销操作**：历史栈按 session 隔离，配合 Immer diff 减少内存。
+- **进度反馈**：覆盖提取、翻译刷新、AI 批量均通过通知与事件回传状态。
 
 ---
 
-## 扩展性预留
+## 依赖策略
 
-1. **插件元数据解析**：预留接口，后续接入专门的Rust库
-2. **翻译功能**：中间区域预留Placeholder，待后续实现
-3. **主题切换**：MUI主题系统支持快速切换
-4. **多语言支持**：可集成i18n库
-
----
-
-## 依赖版本锁定策略
-
-- **主要依赖**：使用 `^` 允许次版本更新
-- **Tauri生态**：严格锁定版本 `2.x`
-- **定期维护**：每月检查依赖安全更新
+- 核心库（Tauri/esp_extractor/rusqlite）锁定主版本，必要时跟随安全更新。
+- 前端依赖允许次版本升级（`^`），使用 pnpm lock 保证 reproducible。
+- 新增 Rust 依赖统一用 `cargo add`，前端依赖统一 `pnpm add`，确保 lock 文件同步。
 
 ---
 
-**文档版本**: v0.1.1
-**更新日期**: 2025-11-22
+**文档版本**: v0.7.8  
+**最后更新**: 2025-12-02  
 **维护者**: orcax
