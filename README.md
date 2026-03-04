@@ -1,6 +1,6 @@
 # SSE Plugin Translator
 
-面向 Bethesda 游戏（如 Skyrim SE/AE）的桌面级插件翻译工作台。前端基于 **React 19 + TypeScript + Vite**，后端采用 **Tauri 2 + Rust 2021**，在本地解析 ESP/ESM/ESL 插件、管理翻译数据库，并提供 AI 批量翻译、DSD 导出与覆盖差异排查等完整工具链。当前版本 **v0.7.8** 相比 v0.6.0 补齐了 DSD 管道、覆盖刷新可靠性和多窗体工作流。
+面向 Bethesda 游戏（如 Skyrim SE/AE）的桌面级插件翻译工作台。前端基于 **React 19 + TypeScript + Vite**，后端采用 **Tauri 2 + Rust 2021**，在本地解析 ESP/ESM/ESL 插件、管理翻译数据库，并提供 AI 批量翻译、DSD 导出与覆盖差异排查等完整工具链。当前版本 **v0.7.9** 相比 v0.6.0 补齐了 DSD 管道、覆盖刷新可靠性和多窗体工作流。
 
 ---
 
@@ -86,6 +86,24 @@
 - `coverage_db.rs`：新增 `clear_entries()` 一键清空，再运行 `extract_and_store()` 生成干净快照。
 - `load_order.rs`：解包顺序遵循最新 `loadorder.txt`，并在写入数据库后套用 DSD 覆盖，打印统计信息。
 - `CoverageWindow.tsx`：基于 Material React Table 呈现搜索结果与快照状态，列宽限制保证可读性；`coverageStore.ts` 订阅 `coverage_progress` / `coverage_complete` 事件。
+
+#### 覆盖卡住离线诊断
+- 脚本：`scripts/diagnose_coverage.py`
+- 作用：只读分析 `coverage.db`，定位 `last_success_mod` 与 `first_suspect_mod`，并输出缺口位置、尾部记录数和快照一致性状态。
+- 示例（release）：
+  ```bash
+  python scripts/diagnose_coverage.py \
+    --coverage-db "D:/path/to/release/userdata/coverage.db" \
+    --loadorder "%LOCALAPPDATA%/Skyrim Special Edition/loadorder.txt" \
+    --data-dir "D:/path/to/Skyrim/Data" \
+    --json
+  ```
+- 示例（开发）：
+  ```bash
+  python scripts/diagnose_coverage.py \
+    --coverage-db "src-tauri/userdata/coverage.db" \
+    --json
+  ```
 
 ---
 

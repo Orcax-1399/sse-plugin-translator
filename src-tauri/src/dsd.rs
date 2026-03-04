@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use serde_json;
+use serde_json::{self, Value};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -90,18 +90,55 @@ pub fn load_dsd_overrides(plugin_path: &Path) -> Result<Option<HashMap<String, S
         processed_files += 1;
         let content = fs::read_to_string(&path)
             .map_err(|e| format!("读取 DSD 文件失败 ({}): {}", path.display(), e))?;
-        let entries: Vec<DsdEntry> = serde_json::from_str(&content)
+        // Some third-party tools save UTF-8 JSON with BOM. Strip it to avoid
+        // serde_json failing at line 1 column 1.
+        let content = content.strip_prefix('\u{feff}').unwrap_or(content.as_str());
+        let entries: Vec<Value> = serde_json::from_str(content)
             .map_err(|e| format!("解析 DSD 文件失败 ({}): {}", path.display(), e))?;
 
         for entry in entries {
-            if let Some((record_type, subrecord_type)) = parse_entry_type(&entry.entry_type) {
-                let key = make_record_key(&entry.form_id, &record_type, &subrecord_type);
-                overrides.insert(key, entry.string);
+            let obj = match entry.as_object() {
+                Some(obj) => obj,
+                None => {
+                    eprintln!("⚠️ DSD 条目不是对象，已跳过 (文件:{})", path.display());
+                    continue;
+                }
+            };
+
+            let form_id = extract_text_field(obj, &["form_id", "editor_id"]);
+            let entry_type = extract_text_field(obj, &["type"]);
+            let string = extract_text_field(
+                obj,
+                &["string", "translated", "translation", "translated_text", "text"],
+            );
+
+            let Some(form_id) = form_id else {
+                eprintln!("⚠️ DSD 条目缺少 form_id/editor_id，已跳过 (文件:{})", path.display());
+                continue;
+            };
+            let Some(entry_type) = entry_type else {
+                eprintln!("⚠️ DSD 条目缺少 type，已跳过 (form={}; 文件:{})", form_id, path.display());
+                continue;
+            };
+            let Some(string) = string else {
+                eprintln!(
+                    "⚠️ DSD 条目缺少目标字符串，已跳过: type='{}' form='{}' (文件:{})",
+                    entry_type,
+                    form_id,
+                    path.display()
+                );
+                continue;
+            };
+
+            if let Some((record_type, subrecord_type)) = parse_entry_type(&entry_type) {
+                let normalized_form_id = normalize_form_id(&form_id);
+                let key = make_record_key(&normalized_form_id, &record_type, &subrecord_type);
+                overrides.insert(key, string);
             } else {
                 eprintln!(
                     "⚠️ 无法解析 DSD 类型字段: '{}' (form_id={}; 文件:{})",
-                    entry.entry_type,
-                    entry.form_id,
+                    entry_type,
+                    form_id,
                     path.display()
                 );
             }
@@ -148,4 +185,32 @@ fn parse_entry_type(entry_type: &str) -> Option<(String, String)> {
     let record_type = parts.next()?;
     let subrecord_type = parts.next()?;
     Some((record_type.to_string(), subrecord_type.to_string()))
+}
+
+fn extract_text_field(
+    obj: &serde_json::Map<String, Value>,
+    names: &[&str],
+) -> Option<String> {
+    for name in names {
+        if let Some(value) = obj.get(*name) {
+            if let Some(as_str) = value.as_str() {
+                return Some(as_str.to_string());
+            }
+            if let Some(as_num) = value.as_i64() {
+                return Some(as_num.to_string());
+            }
+            if let Some(as_u64) = value.as_u64() {
+                return Some(as_u64.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn normalize_form_id(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.starts_with('[') && trimmed.ends_with(']') && trimmed.len() > 2 {
+        return trimmed[1..trimmed.len() - 1].to_string();
+    }
+    trimmed.to_string()
 }

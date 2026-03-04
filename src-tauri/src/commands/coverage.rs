@@ -205,7 +205,7 @@ pub async fn run_coverage_extraction(
             // 创建进度回调，通过事件发送
             let app_clone = app.clone();
             let callback = move |update: CoverageProgressUpdate| {
-                let result = app_clone.emit(
+                let _ = app_clone.emit(
                     "coverage_progress",
                     CoverageProgressPayload {
                         current_mod: update.current_mod.clone(),
@@ -213,7 +213,6 @@ pub async fn run_coverage_extraction(
                         total: update.total,
                     },
                 );
-                eprintln!("[DEBUG] coverage_progress emit result: {:?}, mod: {}", result, update.current_mod);
             };
 
             // 执行提取
@@ -222,7 +221,7 @@ pub async fn run_coverage_extraction(
             // 发送完成事件
             match stats_result {
                 Ok(stats) => {
-                    let result = app.emit(
+                    let _ = app.emit(
                         "coverage_complete",
                         CoverageCompletePayload {
                             success: true,
@@ -230,11 +229,10 @@ pub async fn run_coverage_extraction(
                             error: None,
                         },
                     );
-                    eprintln!("[DEBUG] coverage_complete (success) emit result: {:?}", result);
                     Ok(())
                 }
                 Err(e) => {
-                    let result = app.emit(
+                    let _ = app.emit(
                         "coverage_complete",
                         CoverageCompletePayload {
                             success: false,
@@ -242,7 +240,6 @@ pub async fn run_coverage_extraction(
                             error: Some(e.clone()),
                         },
                     );
-                    eprintln!("[DEBUG] coverage_complete (error) emit result: {:?}", result);
                     Err(e)
                 }
             }

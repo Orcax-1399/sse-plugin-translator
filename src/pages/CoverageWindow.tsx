@@ -38,12 +38,9 @@ export default function CoverageWindow() {
     let unlistenComplete: (() => void) | undefined;
 
     (async () => {
-      console.log("[DEBUG] Setting up coverage event listeners...");
-
       unlistenProgress = await listen<CoverageProgressPayload>(
         "coverage_progress",
         (event) => {
-          console.log("[DEBUG] Received coverage_progress:", event.payload);
           setExtractionProgress(event.payload);
         }
       );
@@ -51,13 +48,10 @@ export default function CoverageWindow() {
       unlistenComplete = await listen<CoverageCompletePayload>(
         "coverage_complete",
         (event) => {
-          console.log("[DEBUG] Received coverage_complete:", event.payload);
           const { success, stats, error } = event.payload;
           setExtractionComplete(success, stats ?? null, error ?? null);
         }
       );
-
-      console.log("[DEBUG] Coverage event listeners ready");
     })();
 
     return () => {
