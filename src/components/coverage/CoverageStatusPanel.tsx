@@ -60,6 +60,11 @@ export default function CoverageStatusPanel() {
     return formatTimestamp(status.snapshot_timestamp ?? null);
   }, [status, formatTimestamp]);
 
+  const failedErrors = useMemo(
+    () => lastExtractionStats?.errors ?? [],
+    [lastExtractionStats]
+  );
+
   const loadOrderAvailable = status?.load_order_available ?? false;
 
   // 处理开始提取
@@ -88,6 +93,21 @@ export default function CoverageStatusPanel() {
           {lastExtractionStats.total_records} 条记录
           {lastExtractionStats.failed_plugins > 0 &&
             ` (${lastExtractionStats.failed_plugins} 个失败)`}
+        </Alert>
+      )}
+
+      {failedErrors.length > 0 && (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          <Typography variant="body2" sx={{ fontWeight: 500, mb: 0.5 }}>
+            失败插件明细
+          </Typography>
+          <List dense disablePadding>
+            {failedErrors.map((item) => (
+              <ListItem key={item} disablePadding>
+                <ListItemText primary={item} primaryTypographyProps={{ variant: "body2" }} />
+              </ListItem>
+            ))}
+          </List>
         </Alert>
       )}
 

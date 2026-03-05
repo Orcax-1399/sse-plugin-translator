@@ -1118,9 +1118,9 @@ dependencies = [
 
 [[package]]
 name = "esp_extractor"
-version = "0.6.0"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "253b399e057ffc6c1ab6e010287910e7a33d41a777d012105ef1790af0baf786"
+checksum = "6289714262ace4cf1f8c11fc0b335537feee9d321b77d243587fe7f4e0179a85"
 dependencies = [
  "anyhow",
  "ba2",

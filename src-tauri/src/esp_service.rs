@@ -1,7 +1,7 @@
 use crate::bsa_logger::log_bsa_presence;
 use crate::constants::BASE_PLUGINS;
 use crate::translation_db::Translation;
-use esp_extractor::LoadedPlugin;
+use esp_extractor::{extract_strings_from_file_fast, ExtractedString};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -41,6 +41,13 @@ pub fn get_base_plugins() -> Vec<String> {
     BASE_PLUGINS.iter().map(|s| s.to_string()).collect()
 }
 
+pub fn extract_strings_for_language(
+    plugin_path: &Path,
+    language: Option<&str>,
+) -> Result<Vec<ExtractedString>, String> {
+    extract_strings_from_file_fast(plugin_path.to_path_buf(), language).map_err(|e| e.to_string())
+}
+
 /// 从单个插件文件提取字符串（双语版本：英文 + 中文对比）
 ///
 /// # 工作原理
@@ -58,17 +65,15 @@ pub fn get_base_plugins() -> Vec<String> {
 pub fn extract_plugin_strings(plugin_path: &Path) -> Result<Vec<Translation>, String> {
     // 1. 加载英文版
     log_bsa_presence(plugin_path, Some("english"));
-    let loaded_en = LoadedPlugin::load_auto(plugin_path.to_path_buf(), Some("english"))
+    let english_strings = extract_strings_for_language(plugin_path, Some("english"))
         .map_err(|e| format!("加载英文版插件失败: {}", e))?;
-    let english_strings = loaded_en.extract_strings();
 
     println!("  📖 英文版提取 {} 条记录", english_strings.len());
 
     // 2. 加载中文版
     log_bsa_presence(plugin_path, Some("chinese"));
-    let loaded_zh = LoadedPlugin::load_auto(plugin_path.to_path_buf(), Some("chinese"))
+    let chinese_strings = extract_strings_for_language(plugin_path, Some("chinese"))
         .map_err(|e| format!("加载中文版插件失败: {}", e))?;
-    let chinese_strings = loaded_zh.extract_strings();
 
     println!("  📖 中文版提取 {} 条记录", chinese_strings.len());
 

@@ -21,7 +21,7 @@ tauri-build = { version = "2", features = [] }
 aho-corasick = "1.1"
 chrono = "0.4.42"
 directories = "5"
-esp_extractor = "0.6.0"
+esp_extractor = "0.8.1"
 rayon = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }

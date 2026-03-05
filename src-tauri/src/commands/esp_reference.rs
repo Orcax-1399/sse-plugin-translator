@@ -1,6 +1,6 @@
 use crate::bsa_logger::log_bsa_presence;
 use crate::plugin_session::PluginSessionManager;
-use esp_extractor::LoadedPlugin;
+use esp_extractor::extract_strings_from_file_fast;
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -86,8 +86,8 @@ pub async fn load_esp_reference(
 
     // 加载译文
     log_bsa_presence(&ref_path, Some("chinese"));
-    let loaded_zh = match LoadedPlugin::load_auto(ref_path.clone(), Some("chinese")) {
-        Ok(p) => p,
+    let chinese_strings = match extract_strings_from_file_fast(ref_path.clone(), Some("chinese")) {
+        Ok(strings) => strings,
         Err(e) => {
             let error_payload = EspReferenceErrorPayload {
                 session_id: session_id.clone(),
@@ -97,7 +97,6 @@ pub async fn load_esp_reference(
             return Err(format!("加载中文版失败: {}", e));
         }
     };
-    let chinese_strings = loaded_zh.extract_strings();
     println!("✓ 译文提取 {} 条字符串", chinese_strings.len());
 
     // 3. 根据 session 原文映射筛选译文
