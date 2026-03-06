@@ -27,6 +27,7 @@ export function extractSystemAndUserFromMessages(
 export function buildFunctionToolsForResponses() {
   return [
     toolDefinitions.search,
+    toolDefinitions.workOnLongText,
     toolDefinitions.applyTranslations,
     toolDefinitions.skip,
   ].map((tool: any) => ({
@@ -40,6 +41,7 @@ export function buildFunctionToolsForResponses() {
 export function buildFunctionToolsForAnthropic() {
   return [
     toolDefinitions.search,
+    toolDefinitions.workOnLongText,
     toolDefinitions.applyTranslations,
     toolDefinitions.skip,
   ].map((tool: any) => ({
@@ -52,6 +54,7 @@ export function buildFunctionToolsForAnthropic() {
 export function buildFunctionToolsForGoogle() {
   return [
     toolDefinitions.search,
+    toolDefinitions.workOnLongText,
     toolDefinitions.applyTranslations,
     toolDefinitions.skip,
   ].map((tool: any) => ({

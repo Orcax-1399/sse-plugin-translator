@@ -1,8 +1,16 @@
 import type OpenAI from "openai";
 import type { AiHistoryEntry, SessionState } from "../aiPrompts";
 import {
-  executeSearch,
+  assembleWorkspaceTranslation,
+  buildLongTextPreview,
+  createLongTextWorkspace,
+  getCompletedSegmentCount,
+  isLongTextCandidate,
+  isWorkspaceComplete,
+} from "../aiLongText";
+import {
   executeApply,
+  executeSearch,
   executeSkip,
   normalizeTermKey,
   type SearchExecutionResult,
@@ -159,11 +167,11 @@ export async function processToolCalls(
             budgetUsed,
             budgetTotal,
           };
-          emitStatus("info", "search预算已耗尽，请先应用已有翻译后再继续查询");
+          emitStatus("info", "search预算已耗尽，请先提交已有翻译后再继续查询");
           pushHistory(sessionState, {
             role: "system",
             message:
-              "search预算已耗尽，请停止search并使用apply_translations（或skip）完成一部分翻译(利用现有信息可以翻译的部分)，即可获得更多预算。",
+              "search预算已耗尽，请停止search并使用apply_translations、work_on_long_text.finalize（或skip）完成一部分翻译(利用现有信息可以翻译的部分)，即可获得更多预算。",
             result: `剩余术语 ${normalizedTerms.length} 个`,
           });
           continue;
@@ -211,6 +219,265 @@ export async function processToolCalls(
         hasError = true;
         break;
       }
+    } else if (toolName === "work_on_long_text") {
+      const index = normalizeNumericIndex(args.index);
+      const action = typeof args.action === "string" ? args.action.trim() : "";
+
+      if (!Number.isFinite(index)) {
+        pushHistory(sessionState, {
+          role: "tool",
+          tool: "work_on_long_text",
+          message: "index必须是有效数字",
+          result: aiResponsePreview,
+        });
+        hasError = true;
+        break;
+      }
+
+      const row = sessionState.csv.find((item) => item.index === index);
+      if (!row) {
+        pushHistory(sessionState, {
+          role: "tool",
+          tool: "work_on_long_text",
+          message: `index ${index} 不存在于当前CSV中`,
+        });
+        hasError = true;
+        break;
+      }
+
+      if (!isLongTextCandidate(row.rawText)) {
+        pushHistory(sessionState, {
+          role: "tool",
+          tool: "work_on_long_text",
+          message: `index ${index} 不是长文本，无需创建工作区`,
+        });
+        hasError = true;
+        break;
+      }
+
+      if (action === "start") {
+        const existingWorkspace = sessionState.longTextWorkspaces[index];
+        if (existingWorkspace) {
+          emitStatus(
+            "info",
+            `长文本工作区已存在：index ${index}，${getCompletedSegmentCount(existingWorkspace)}/${existingWorkspace.segments.length}`,
+          );
+          pushHistory(sessionState, {
+            role: "tool",
+            tool: "work_on_long_text",
+            message: `复用 index ${index} 的长文本工作区`,
+            result: `${getCompletedSegmentCount(existingWorkspace)}/${existingWorkspace.segments.length}`,
+          });
+          continue;
+        }
+
+        const workspace = createLongTextWorkspace({
+          index,
+          rawText: row.rawText,
+          sourceText: row.text,
+        });
+        sessionState.longTextWorkspaces[index] = workspace;
+
+        emitStatus(
+          "info",
+          `已创建长文本工作区：index ${index}，共 ${workspace.segments.length} 段`,
+        );
+        pushHistory(sessionState, {
+          role: "tool",
+          tool: "work_on_long_text",
+          message: `启动 index ${index} 的长文本工作区`,
+          result: `${workspace.segments.length} 段`,
+        });
+      } else if (action === "save") {
+        const workspace = sessionState.longTextWorkspaces[index];
+        if (!workspace) {
+          pushHistory(sessionState, {
+            role: "tool",
+            tool: "work_on_long_text",
+            message: `index ${index} 尚未启动长文本工作区，请先调用 start`,
+          });
+          hasError = true;
+          break;
+        }
+
+        let segments = args.segments;
+        if (typeof segments === "string") {
+          try {
+            segments = JSON.parse(segments);
+          } catch (error) {
+            pushHistory(sessionState, {
+              role: "tool",
+              tool: "work_on_long_text",
+              message: "segments格式错误",
+              result: String(error),
+            });
+            hasError = true;
+            break;
+          }
+        }
+
+        const normalizedSegments = Array.isArray(segments)
+          ? segments
+              .map((segment) => ({
+                segmentIndex: normalizeNumericIndex(segment?.segment_index),
+                translated:
+                  typeof segment?.translated === "string"
+                    ? segment.translated
+                    : "",
+              }))
+              .filter((segment) => Number.isFinite(segment.segmentIndex))
+          : [];
+
+        if (normalizedSegments.length === 0) {
+          pushHistory(sessionState, {
+            role: "tool",
+            tool: "work_on_long_text",
+            message: "save必须包含至少一个有效的segments项",
+            result: aiResponsePreview,
+          });
+          hasError = true;
+          break;
+        }
+
+        const invalidSegments = normalizedSegments.filter(
+          (segment) =>
+            segment.segmentIndex < 0 ||
+            segment.segmentIndex >= workspace.segments.length,
+        );
+        if (invalidSegments.length > 0) {
+          pushHistory(sessionState, {
+            role: "tool",
+            tool: "work_on_long_text",
+            message: `存在无效segment_index: ${invalidSegments.map((segment) => segment.segmentIndex).join(", ")}`,
+          });
+          hasError = true;
+          break;
+        }
+
+        normalizedSegments.forEach((segment) => {
+          workspace.segments[segment.segmentIndex].translatedText = segment.translated;
+        });
+        workspace.updatedAt = Date.now();
+
+        const completedSegments = getCompletedSegmentCount(workspace);
+        const isComplete = isWorkspaceComplete(workspace);
+        emitStatus(
+          "info",
+          isComplete
+            ? `长文本 index ${index} 已完成全部片段，可调用 apply_translations 提交`
+            : `已保存长文本 index ${index} 的 ${normalizedSegments.length} 个片段（${completedSegments}/${workspace.segments.length}）`,
+        );
+        pushHistory(sessionState, {
+          role: "tool",
+          tool: "work_on_long_text",
+          message: `保存 index ${index} 的 ${normalizedSegments.length} 个片段草稿`,
+          result: isComplete
+            ? `已完成，预览: ${buildLongTextPreview(assembleWorkspaceTranslation(workspace), 120)}`
+            : `${completedSegments}/${workspace.segments.length}`,
+        });
+      } else if (action === "finalize") {
+        const workspace = sessionState.longTextWorkspaces[index];
+        if (!workspace) {
+          pushHistory(sessionState, {
+            role: "tool",
+            tool: "work_on_long_text",
+            message: `index ${index} 尚未启动长文本工作区，请先调用 start`,
+          });
+          hasError = true;
+          break;
+        }
+
+        if (!isWorkspaceComplete(workspace)) {
+          const completedSegments = getCompletedSegmentCount(workspace);
+          const errorMessage = `index ${index} 的长文本工作区尚未完成全部片段（${completedSegments}/${workspace.segments.length}），不能 finalize`;
+          emitStatus("error", errorMessage);
+          pushHistory(sessionState, {
+            role: "tool",
+            tool: "work_on_long_text",
+            message: "finalize执行失败",
+            result: errorMessage,
+          });
+          hasError = true;
+          break;
+        }
+
+        const finalTranslation = assembleWorkspaceTranslation(workspace);
+        const finalizeResult = executeApply(
+          [{ index, translated: finalTranslation }],
+          sessionState,
+          (_applyIndex, translated) => {
+            const entry = entryMap.get(index);
+            if (entry) {
+              onApply(
+                index,
+                entry.recordIndex,
+                entry.formId,
+                entry.recordType,
+                entry.subrecordType,
+                translated,
+              );
+            }
+          },
+          expandIndices,
+        );
+
+        if (!finalizeResult.success) {
+          const errorMessage = finalizeResult.error || "未知错误";
+          emitStatus("error", `finalize执行失败: ${errorMessage}`);
+          pushHistory(sessionState, {
+            role: "tool",
+            tool: "work_on_long_text",
+            message: "finalize执行失败",
+            result: errorMessage,
+          });
+          hasError = true;
+          break;
+        }
+
+        const appliedIndices = finalizeResult.appliedIndices ?? [];
+        const expandedCount = finalizeResult.expandedCount ?? 0;
+        removeLongTextWorkspaces(sessionState, appliedIndices);
+
+        const completed = totalCount - sessionState.csv.length;
+        sessionState.completedCount = completed;
+        sessionState.searchMeta = {
+          ...sessionState.searchMeta,
+          deferredTerms: [],
+          budgetUsed: 0,
+          budgetTotal: computeSearchBudget(sessionState.csv),
+        };
+        upsertTranslationMemoryEntries(
+          sessionState,
+          [{ index, translated: finalTranslation }],
+          entryMap,
+        );
+
+        emitStatus(
+          "info",
+          expandedCount > 0
+            ? `长文本 index ${index} finalize成功，并自动扩散 ${expandedCount} 条重复原文`
+            : `长文本 index ${index} finalize成功，已自动提交`,
+        );
+        pushHistory(sessionState, {
+          role: "tool",
+          tool: "work_on_long_text",
+          message: `finalize index ${index}`,
+          result:
+            expandedCount > 0
+              ? `自动提交并扩散 ${expandedCount} 条`
+              : `自动提交，预览: ${buildLongTextPreview(finalTranslation, 120)}`,
+        });
+
+        onProgress(completed, totalCount);
+      } else {
+        pushHistory(sessionState, {
+          role: "tool",
+          tool: "work_on_long_text",
+          message: `不支持的action: ${action || "(空)"}`,
+        });
+        hasError = true;
+        break;
+      }
     } else if (toolName === "apply_translations") {
       let translations = args.translations;
       if (typeof translations === "string") {
@@ -236,6 +503,19 @@ export async function processToolCalls(
       const translationItems = Array.isArray(translations)
         ? (translations as Array<{ index: number; translated: string }>)
         : [];
+
+      const longTextError = validateLongTextApply(translationItems, sessionState);
+      if (longTextError) {
+        emitStatus("error", longTextError);
+        pushHistory(sessionState, {
+          role: "tool",
+          tool: "apply_translations",
+          message: "长文本条目尚未满足提交条件",
+          result: longTextError,
+        });
+        hasError = true;
+        break;
+      }
 
       const applyResult = executeApply(
         translationItems,
@@ -287,6 +567,7 @@ export async function processToolCalls(
       const completed = totalCount - sessionState.csv.length;
       sessionState.completedCount = completed;
       const appliedIndices = applyResult.appliedIndices ?? [];
+      removeLongTextWorkspaces(sessionState, appliedIndices);
       sessionState.searchMeta = {
         ...sessionState.searchMeta,
         deferredTerms: [],
@@ -328,8 +609,7 @@ export async function processToolCalls(
 
       const normalized = skipItems
         .map((item) => ({
-          index:
-            typeof item.index === "number" ? item.index : Number(item.index),
+          index: normalizeNumericIndex(item.index),
           reason:
             typeof item.reason === "string"
               ? item.reason.trim().slice(0, 200)
@@ -363,6 +643,10 @@ export async function processToolCalls(
       }
 
       const skippedEntries = skipResult.skippedEntries ?? [];
+      removeLongTextWorkspaces(
+        sessionState,
+        skippedEntries.map((entry) => entry.index),
+      );
       const completed = totalCount - sessionState.csv.length;
       sessionState.completedCount = completed;
 
@@ -387,4 +671,41 @@ export async function processToolCalls(
   }
 
   return hasError;
+}
+
+function normalizeNumericIndex(value: unknown): number {
+  if (typeof value === "number") {
+    return value;
+  }
+  return Number(value);
+}
+
+function validateLongTextApply(
+  translationItems: Array<{ index: number; translated: string }>,
+  sessionState: SessionState,
+): string | null {
+  for (const item of translationItems) {
+    const row = sessionState.csv.find((entry) => entry.index === item.index);
+    if (!row || !isLongTextCandidate(row.rawText)) {
+      continue;
+    }
+
+    const workspace = sessionState.longTextWorkspaces[item.index];
+    if (!workspace) {
+      return `index ${item.index} 是长文本，必须先调用 work_on_long_text.start`;
+    }
+
+    return `index ${item.index} 是长文本，请改用 work_on_long_text.finalize 自动提交`;
+  }
+
+  return null;
+}
+
+function removeLongTextWorkspaces(
+  sessionState: SessionState,
+  indices: number[],
+) {
+  indices.forEach((index) => {
+    delete sessionState.longTextWorkspaces[index];
+  });
 }

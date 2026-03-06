@@ -171,6 +171,7 @@ export async function translateBatchWithAI(
       translationMemory: Array.isArray(initialTranslationMemory)
         ? initialTranslationMemory.slice(0, 120)
         : [],
+      longTextWorkspaces: {},
     };
 
     // 3. 创建entry映射（用于apply_translations时查找完整信息）
@@ -261,6 +262,7 @@ export async function translateBatchWithAI(
             messages: messages as ChatCompletionMessageParam[],
             tools: [
               toolDefinitions.search,
+              toolDefinitions.workOnLongText,
               toolDefinitions.applyTranslations,
               toolDefinitions.skip,
             ],
@@ -330,7 +332,7 @@ export async function translateBatchWithAI(
         pushHistory(sessionState, {
           role: "system",
           message:
-            "你必须调用工具（search / apply_translations / skip），不能直接输出文本。",
+            "你必须调用工具（search / work_on_long_text / apply_translations / skip），不能直接输出文本。",
           result: trimmedPreview,
         });
         continue;

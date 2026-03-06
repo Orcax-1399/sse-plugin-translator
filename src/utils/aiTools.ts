@@ -113,6 +113,47 @@ export const toolDefinitions = {
       },
     },
   },
+  workOnLongText: {
+    type: "function" as const,
+    function: {
+      name: "work_on_long_text",
+      description:
+        "处理长文本条目的分段工作区。可启动分段、保存片段草稿，或在全部完成后自动提交最终译文。",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["start", "save", "finalize"],
+            description: "start用于创建工作区，save用于保存片段草稿，finalize用于检查完成度并自动提交",
+          },
+          index: {
+            type: "number",
+            description: "CSV行的index",
+          },
+          segments: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                segment_index: {
+                  type: "number",
+                  description: "片段索引，从0开始",
+                },
+                translated: {
+                  type: "string",
+                  description: "该片段当前保存的中文草稿",
+                },
+              },
+              required: ["segment_index", "translated"],
+            },
+            description: "action为save时需要提供的片段草稿列表；finalize时不需要提供",
+          },
+        },
+        required: ["action", "index"],
+      },
+    },
+  },
   applyTranslations: {
     type: "function" as const,
     function: {
