@@ -262,18 +262,20 @@ export default function ReplaceDialog({
                 }}
               />
               <Tooltip title="AI辅助生成正则表达式">
-                <IconButton
-                  size="small"
-                  color="primary"
-                  onClick={handleAiAssist}
-                  disabled={aiLoading || !findText.trim()}
-                  sx={{
-                    border: "1px solid",
-                    borderColor: "divider",
-                  }}
-                >
-                  <AutoFixHigh fontSize="small" />
-                </IconButton>
+                <span>
+                  <IconButton
+                    size="small"
+                    color="primary"
+                    onClick={handleAiAssist}
+                    disabled={aiLoading || !findText.trim()}
+                    sx={{
+                      border: "1px solid",
+                      borderColor: "divider",
+                    }}
+                  >
+                    <AutoFixHigh fontSize="small" />
+                  </IconButton>
+                </span>
               </Tooltip>
             </Box>
           </Box>

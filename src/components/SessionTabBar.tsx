@@ -68,8 +68,15 @@ export default function SessionTabBar() {
                     {session.plugin_name}
                   </span>
                   <IconButton
+                    component="span"
                     size="small"
                     onClick={(e) => handleClose(session.session_id, e)}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    tabIndex={-1}
+                    aria-label={`关闭 ${session.plugin_name}`}
                     sx={{
                       ml: 0.5,
                       padding: "2px",

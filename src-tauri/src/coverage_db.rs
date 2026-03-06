@@ -89,33 +89,6 @@ impl CoverageDB {
     }
 
     /// 覆盖插入/更新单条记录
-    pub fn upsert_entry(&self, entry: CoverageEntry) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT INTO coverage_entries
-                (form_id, record_type, subrecord_type, \"index\", text,
-                 source_mod, load_order_pos, extracted_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-             ON CONFLICT(form_id, record_type, subrecord_type, \"index\")
-             DO UPDATE SET
-                text = excluded.text,
-                source_mod = excluded.source_mod,
-                load_order_pos = excluded.load_order_pos,
-                extracted_at = excluded.extracted_at",
-            params![
-                entry.form_id,
-                entry.record_type,
-                entry.subrecord_type,
-                entry.index,
-                entry.text,
-                entry.source_mod,
-                entry.load_order_pos,
-                entry.extracted_at
-            ],
-        )?;
-        Ok(())
-    }
-
     /// 事务性批量写入
     pub fn batch_upsert_entries(&self, entries: Vec<CoverageEntry>) -> Result<()> {
         let conn = self.conn.lock().unwrap();
@@ -232,18 +205,6 @@ impl CoverageDB {
     }
 
     /// 获取元信息键值
-    pub fn get_meta(&self, key: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
-        let value: Option<String> = conn
-            .query_row(
-                "SELECT value FROM coverage_meta WHERE key = ?1",
-                params![key],
-                |row| row.get(0),
-            )
-            .optional()?;
-        Ok(value)
-    }
-
     /// 搜索覆盖记录
     pub fn search_entries(
         &self,

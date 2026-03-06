@@ -263,37 +263,6 @@ impl AtomicDB {
     }
 
     /// 批量添加原子翻译（用于初始化或导入）
-    pub fn batch_upsert(&self, atoms: Vec<(&str, &str, AtomSource)>) -> SqliteResult<()> {
-        let conn = self.conn.lock().unwrap();
-        let tx = conn.unchecked_transaction()?;
-
-        let now = now_timestamp();
-
-        for (original, translated, source) in atoms {
-            let original_lower = original.to_lowercase();
-            tx.execute(
-                "INSERT INTO atomic_translations
-                 (original_text, translated_text, source_type, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?4)
-                 ON CONFLICT(original_text) DO UPDATE SET
-                     translated_text = ?2,
-                     source_type = ?3,
-                     updated_at = ?4",
-                params![&original_lower, translated, source.as_str(), now],
-            )?;
-        }
-
-        tx.commit()?;
-
-        drop(conn); // 释放锁
-
-        // 重新加载到内存
-        self.load_all_to_memory()?;
-        self.rebuild_matcher()?;
-
-        Ok(())
-    }
-
     // ==================== 内部辅助方法 ====================
 
     /// 从SQLite加载所有数据到内存
