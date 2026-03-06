@@ -1,0 +1,32 @@
+.editor-codemirror .cm-editor {
+  font-family: "Consolas", "Cascadia Mono", "Courier New", "Microsoft YaHei UI",
+    monospace;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.editor-codemirror .cm-content {
+  padding: 16px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+
+.editor-codemirror .cm-line {
+  word-break: break-word;
+}
+
+.editor-codemirror--source .cm-editor {
+  background-color: rgba(0, 0, 0, 0.02);
+}
+
+.editor-codemirror--source .cm-content {
+  caret-color: transparent;
+}
+
+.editor-codemirror--target .cm-editor {
+  background-color: #ffffff;
+}
+
+.editor-codemirror--target .cm-editor.cm-focused {
+  outline: none;
+}

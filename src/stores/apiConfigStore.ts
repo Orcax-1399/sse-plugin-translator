@@ -11,10 +11,18 @@ export interface ApiConfig {
   apiKey: string;
   modelName: string;
   maxTokens: number;
+  apiStyle: ApiStyle;
+  contextWindow: number;
   isActive: boolean;
   createdAt: number;
   updatedAt: number;
 }
+
+export type ApiStyle =
+  | 'openai_chat_completions'
+  | 'openai_responses'
+  | 'anthropic_messages'
+  | 'google_v1beta_generate_content';
 
 /**
  * API配置状态管理

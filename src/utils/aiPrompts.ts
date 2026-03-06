@@ -33,6 +33,13 @@ export interface SessionState {
   };
   /** 最近的历史对话（search/apply/skip/error），FIFO */
   history: AiHistoryEntry[];
+  /** 跨轮可复用的句级翻译记忆（用于减少重复翻译） */
+  translationMemory: TranslationMemoryEntry[];
+}
+
+export interface TranslationMemoryEntry {
+  original: string;
+  translated: string;
 }
 
 export interface SearchResult {
@@ -57,6 +64,7 @@ export function buildSystemPrompt(): string {
 2. 你有三个工具：search（查询术语）、apply_translations（提交翻译）与 skip（跳过无需翻译的条目）
 3. 当遇到了**人名**, **地名**, **术语**的时候，应先检查 SEARCH 缓存，如果没有合适候选再调用 search
 4. search 有调用预算，User Prompt 会提供 “budgetUsed/budgetTotal”，请优先复用缓存，只有在确实需要时才查询
+5. SEARCH缓存的键是归一化术语（小写），例如 "dragonborn"
 
 ## 工具使用规范
 
@@ -136,6 +144,8 @@ export function buildSystemPrompt(): string {
  * 提供当前任务状态（CSV + SEARCH缓存 + 可选错误）
  */
 export function buildUserPrompt(state: SessionState): string {
+  const maxSearchCacheLines = 80;
+  const maxMemoryLines = 40;
   let prompt = `当前翻译任务状态：\n\n`;
 
   // 1. CSV待翻译列表
@@ -158,12 +168,42 @@ export function buildUserPrompt(state: SessionState): string {
   if (cacheEntries.length === 0) {
     prompt += `(空缓存)\n\n`;
   } else {
-    prompt += "```json\n";
-    prompt += JSON.stringify(state.searchCache, null, 2);
-    prompt += "\n```\n\n";
+    const visible = cacheEntries.slice(0, maxSearchCacheLines);
+    visible.forEach(([term, result]) => {
+      if (result.status === "ok" && result.candidates.length > 0) {
+        const candidates = result.candidates
+          .slice(0, 3)
+          .map((item) => item.zh)
+          .join(" | ");
+        prompt += `- ${term} => ${candidates}\n`;
+      } else {
+        prompt += `- ${term} => (not_found)\n`;
+      }
+    });
+    if (cacheEntries.length > visible.length) {
+      prompt += `- ...(省略 ${cacheEntries.length - visible.length} 条)\n`;
+    }
+    prompt += "\n";
   }
 
-  // 3. 进度
+  // 3. 翻译记忆（句级）
+  prompt += `## 翻译记忆\n\n`;
+  if (!state.translationMemory || state.translationMemory.length === 0) {
+    prompt += `(空记忆)\n\n`;
+  } else {
+    const visibleMemory = state.translationMemory.slice(0, maxMemoryLines);
+    visibleMemory.forEach((item) => {
+      const original = item.original.replace(/\n/g, "\\n");
+      const translated = item.translated.replace(/\n/g, "\\n");
+      prompt += `- "${original}" => "${translated}"\n`;
+    });
+    if (state.translationMemory.length > visibleMemory.length) {
+      prompt += `- ...(省略 ${state.translationMemory.length - visibleMemory.length} 条)\n`;
+    }
+    prompt += "\n";
+  }
+
+  // 4. 进度
   prompt += `## 进度\n\n`;
   prompt += `- 已完成: ${state.completedCount}/${state.totalCount}\n`;
   prompt += `- search预算: ${state.searchMeta.budgetUsed}/${state.searchMeta.budgetTotal}\n\n`;
@@ -175,7 +215,7 @@ export function buildUserPrompt(state: SessionState): string {
     prompt += `⚠️ search预算已耗尽：请立刻使用 apply_translations 或 skip 完成一部分任务(利用现有信息可以翻译的部分)，即可获得更多预算。\n\n`;
   }
 
-  // 4. 历史记录（最多若干条）
+  // 5. 历史记录（最多若干条）
   prompt += `## 历史记录（最近 ${state.history.length} 条）\n\n`;
   if (state.history.length === 0) {
     prompt += `(暂无历史记录)\n\n`;

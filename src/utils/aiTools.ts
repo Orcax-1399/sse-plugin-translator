@@ -45,6 +45,52 @@ interface ReferenceTranslation {
   updated_at: number;
 }
 
+const ATOM_CACHE_TTL_MS = 60_000;
+let atomCache:
+  | {
+      expiresAt: number;
+      map: Map<string, string>;
+    }
+  | null = null;
+
+export function normalizeTermKey(term: string): string {
+  return term.trim().toLowerCase();
+}
+
+async function getAtomMap(): Promise<Map<string, string>> {
+  const now = Date.now();
+  if (atomCache && atomCache.expiresAt > now) {
+    return atomCache.map;
+  }
+
+  const atoms = await invoke<AtomTranslation[]>("get_all_atoms");
+  const map = new Map<string, string>();
+  atoms.forEach((atom) => {
+    map.set(normalizeTermKey(atom.original), atom.translated);
+  });
+
+  atomCache = {
+    expiresAt: now + ATOM_CACHE_TTL_MS,
+    map,
+  };
+  return map;
+}
+
+async function queryReferenceTranslations(
+  term: string,
+): Promise<ReferenceTranslation[]> {
+  try {
+    const refs = await invoke<ReferenceTranslation[]>("query_word_translations", {
+      text: term,
+      limit: 5,
+    });
+    return Array.isArray(refs) ? refs : [];
+  } catch (error) {
+    console.warn(`查询参考翻译失败 (${term}):`, error);
+    return [];
+  }
+}
+
 /**
  * 工具定义（OpenAI格式）
  */
@@ -145,10 +191,13 @@ export async function executeSearch(
   const cache = options?.cache || {};
   const queriedTerms: string[] = [];
   const cacheHits: string[] = [];
+  const normalizedTerms = Array.from(
+    new Set(terms.map((term) => normalizeTermKey(term)).filter(Boolean)),
+  );
 
   // ⚠️ 保证：即使查询失败，每个term也要有结果
   // 先初始化所有terms为not_found，后续找到了再覆盖
-  terms.forEach((term) => {
+  normalizedTerms.forEach((term) => {
     results[term] = {
       status: "not_found",
       candidates: [],
@@ -156,85 +205,58 @@ export async function executeSearch(
   });
 
   try {
-    // 1. 查询原子库（atomic_translations）
-    const atoms = await invoke<AtomTranslation[]>("get_all_atoms");
-    const atomMap = new Map<string, string>();
-    atoms.forEach((atom) => {
-      // 原子库存储小写，匹配时不区分大小写
-      atomMap.set(atom.original.toLowerCase(), atom.translated);
-    });
+    const atomMap = await getAtomMap();
 
-    // 2. 对每个术语进行查询
-    for (const term of terms) {
-      const lowerTerm = term.toLowerCase();
+    const uncachedTerms = normalizedTerms.filter(
+      (term) => !(cache[term] && cache[term].status === "ok"),
+    );
+    queriedTerms.push(...uncachedTerms);
 
-      // 2.1 检查缓存
+    const refsByTerm = new Map<string, ReferenceTranslation[]>();
+    await Promise.all(
+      uncachedTerms.map(async (term) => {
+        refsByTerm.set(term, await queryReferenceTranslations(term));
+      }),
+    );
+
+    for (const term of normalizedTerms) {
       if (cache[term] && cache[term].status === "ok") {
         results[term] = cache[term];
         cacheHits.push(term);
-        continue; // 跳过实际查询
+        continue;
       }
 
-      // 2.2 记录为实际查询
-      queriedTerms.push(term);
-
       const candidates: Array<{ en: string; zh: string; length: number }> = [];
-
-      // 2.3 查询原子库
-      if (atomMap.has(lowerTerm)) {
+      if (atomMap.has(term)) {
         candidates.push({
           en: term,
-          zh: atomMap.get(lowerTerm)!,
+          zh: atomMap.get(term)!,
           length: term.length,
         });
       }
 
-      // 2.4 查询参考翻译（translations表）
-      try {
-        const refs = await invoke<ReferenceTranslation[]>(
-          "query_word_translations",
-          {
-            text: term,
-            limit: 5, // 最多返回5个参考
-          },
-        );
-
-        // 安全检查：确保refs是数组且元素有效
-        if (Array.isArray(refs)) {
-          refs.forEach((ref) => {
-            // 跳过无效数据
-            if (!ref || !ref.original_text || !ref.translated_text) {
-              console.warn(`跳过无效的参考翻译数据:`, ref);
-              return;
-            }
-            // 避免重复添加（原子库优先）
-            if (!candidates.some((c) => c.zh === ref.translated_text)) {
-              candidates.push({
-                en: ref.original_text,
-                zh: ref.translated_text,
-                length: ref.original_text.length,
-              });
-            }
-          });
-        } else {
-          console.warn(`query_word_translations返回非数组:`, refs);
+      const refs = refsByTerm.get(term) || [];
+      refs.forEach((ref) => {
+        if (!ref || !ref.original_text || !ref.translated_text) {
+          return;
         }
-      } catch (error) {
-        console.warn(`查询参考翻译失败 (${term}):`, error);
-      }
+        if (!candidates.some((c) => c.zh === ref.translated_text)) {
+          candidates.push({
+            en: ref.original_text,
+            zh: ref.translated_text,
+            length: ref.original_text.length,
+          });
+        }
+      });
 
-      // 3. 处理结果
       if (candidates.length === 0) {
-        // 没有找到任何候选
         results[term] = {
           status: "not_found",
           candidates: [],
         };
       } else {
-        // 按字符串长度排序（短→长），取top3
         candidates.sort((a, b) => a.length - b.length);
         const top3 = candidates.slice(0, 3);
-
         results[term] = {
           status: "ok",
           candidates: top3.map((c) => ({ en: c.en, zh: c.zh })),

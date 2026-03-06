@@ -53,7 +53,7 @@ import {
   type CancellationToken,
   type AiStatusUpdate,
 } from "../utils/aiTranslation";
-import type { SearchResult } from "../utils/aiPrompts";
+import type { TranslationMemoryEntry } from "../utils/aiPrompts";
 
 // Thinking 动画组件（Claude/ChatGPT 风格 shimmer 效果）
 const ThinkingText = styled(Typography)(({ theme }) => ({
@@ -108,18 +108,18 @@ const AI_TRANSLATION_CHUNK_SIZE = 50;
 const MAX_CACHE_ENTRIES = 200;
 const MAX_CACHE_TEXT_LENGTH = 200;
 
-const buildSessionSearchCache = (
+const buildSessionTranslationMemory = (
   sessionId: string,
-): Record<string, SearchResult> => {
+): TranslationMemoryEntry[] => {
   const session = useSessionStore
     .getState()
     .openedSessions.get(sessionId);
 
   if (!session) {
-    return {};
+    return [];
   }
 
-  const uniqueEntries = new Map<string, SearchResult>();
+  const uniqueEntries = new Map<string, TranslationMemoryEntry>();
   session.strings.forEach((record) => {
     if (
       record.translation_status !== "ai" ||
@@ -145,22 +145,14 @@ const buildSessionSearchCache = (
         : translated;
 
     uniqueEntries.set(truncatedOriginal, {
-      status: "ok",
-      candidates: [{ en: truncatedOriginal, zh: truncatedTranslated }],
+      original: truncatedOriginal,
+      translated: truncatedTranslated,
     });
   });
 
-  const limitedEntries = Array.from(uniqueEntries.entries()).slice(
+  return Array.from(uniqueEntries.values()).slice(
     0,
     MAX_CACHE_ENTRIES,
-  );
-
-  return limitedEntries.reduce<Record<string, SearchResult>>(
-    (acc, [original, result]) => {
-      acc[original] = result;
-      return acc;
-    },
-    {},
   );
 };
 
@@ -246,6 +238,9 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
   const [statusHistory, setStatusHistory] = useState<AiStatusUpdate[]>([]);
   const [currentIteration, setCurrentIteration] = useState(0);
   const [isHeartbeatActive, setIsHeartbeatActive] = useState(false);
+  const [contextUsagePercent, setContextUsagePercent] = useState<number | null>(
+    null,
+  );
 
   // 取消令牌和心跳计时器（使用 useRef 避免重新创建）
   const cancellationTokenRef = useRef<CancellationToken | null>(null);
@@ -262,6 +257,7 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
     setStatusHistory([]);
     setCurrentIteration(0);
     setIsHeartbeatActive(false);
+    setContextUsagePercent(null);
     setAiStatus(null);
     lastStatusTimeRef.current = Date.now();
 
@@ -594,6 +590,9 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
       const pushStatus = (status: AiStatusUpdate) => {
         setAiStatus(status);
         setStatusHistory((prev) => [...prev.slice(-4), status]);
+        if (typeof status.contextUsedPercent === "number") {
+          setContextUsagePercent(status.contextUsedPercent);
+        }
         lastStatusTimeRef.current = Date.now();
         setIsHeartbeatActive(false);
       };
@@ -659,7 +658,7 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
             chunkMaxIteration = Math.max(chunkMaxIteration, iteration);
             setCurrentIteration(iterationBase + iteration);
           },
-          buildSessionSearchCache(sessionData.session_id),
+          buildSessionTranslationMemory(sessionData.session_id),
         );
 
         aggregatedTranslated += chunkResult.translatedCount;
@@ -1081,9 +1080,24 @@ export default function SessionPanel({ sessionData }: SessionPanelProps) {
               color="primary"
               variant="outlined"
             />
-            <Typography variant="caption" color="text.secondary">
-              迭代 #{currentIteration}
-            </Typography>
+            <Box sx={{ textAlign: "right" }}>
+              <Typography variant="caption" color="text.secondary">
+                迭代 #{currentIteration}
+              </Typography>
+              {contextUsagePercent !== null && (
+                <Typography
+                  variant="caption"
+                  sx={{
+                    display: "block",
+                    color: "text.disabled",
+                    fontSize: "0.68rem",
+                    lineHeight: 1.2,
+                  }}
+                >
+                  Context ~{contextUsagePercent.toFixed(1)}% used
+                </Typography>
+              )}
+            </Box>
           </Box>
 
           {/* 进度显示 */}

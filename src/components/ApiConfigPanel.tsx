@@ -17,12 +17,17 @@ import {
   Alert,
   Chip,
   InputAdornment,
+  MenuItem,
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
-import { useApiConfigStore, type ApiConfig } from '../stores/apiConfigStore';
+import {
+  useApiConfigStore,
+  type ApiConfig,
+  type ApiStyle,
+} from '../stores/apiConfigStore';
 
 /**
  * API配置面板组件
@@ -50,6 +55,8 @@ export default function ApiConfigPanel() {
     apiKey: '',
     modelName: '',
     maxTokens: 2000,
+    apiStyle: 'openai_chat_completions' as ApiStyle,
+    contextWindow: 128000,
   });
 
   // 显示API Key
@@ -74,13 +81,15 @@ export default function ApiConfigPanel() {
     if (configs.length > 0 && selectedConfigId === null) {
       const firstConfig = configs[0];
       setSelectedConfigId(firstConfig.id);
-      setFormData({
-        name: firstConfig.name || '',
-        endpoint: firstConfig.endpoint || '',
-        apiKey: firstConfig.apiKey || '',
-        modelName: firstConfig.modelName || '',
-        maxTokens: firstConfig.maxTokens || 2000,
-      });
+        setFormData({
+          name: firstConfig.name || '',
+          endpoint: firstConfig.endpoint || '',
+          apiKey: firstConfig.apiKey || '',
+          modelName: firstConfig.modelName || '',
+          maxTokens: firstConfig.maxTokens || 2000,
+          apiStyle: firstConfig.apiStyle || 'openai_chat_completions',
+          contextWindow: firstConfig.contextWindow || 128000,
+        });
       setShowApiKey(false);
       return;
     }
@@ -95,6 +104,8 @@ export default function ApiConfigPanel() {
           apiKey: currentConfig.apiKey || '',
           modelName: currentConfig.modelName || '',
           maxTokens: currentConfig.maxTokens || 2000,
+          apiStyle: currentConfig.apiStyle || 'openai_chat_completions',
+          contextWindow: currentConfig.contextWindow || 128000,
         });
       }
     }
@@ -109,6 +120,8 @@ export default function ApiConfigPanel() {
       apiKey: config.apiKey || '',
       modelName: config.modelName || '',
       maxTokens: config.maxTokens || 2000,
+      apiStyle: config.apiStyle || 'openai_chat_completions',
+      contextWindow: config.contextWindow || 128000,
     });
     setShowApiKey(false);
   };
@@ -188,6 +201,8 @@ export default function ApiConfigPanel() {
           apiKey: '',
           modelName: '',
           maxTokens: 2000,
+          apiStyle: 'openai_chat_completions',
+          contextWindow: 128000,
         });
       }
     } catch (err) {
@@ -337,6 +352,36 @@ export default function ApiConfigPanel() {
                 disabled={isLoading}
               />
 
+              {/* API风格 */}
+              <TextField
+                label="API 风格"
+                size="small"
+                fullWidth
+                select
+                value={formData.apiStyle}
+                onChange={(e) =>
+                  handleFieldChange('apiStyle', e.target.value as ApiStyle)
+                }
+                onBlur={() => handleFieldBlur('apiStyle')}
+                disabled={isLoading}
+              >
+                <MenuItem value="openai_chat_completions">
+                  OpenAI Compatible (chat/completions, 完整支持)
+                </MenuItem>
+                <MenuItem value="openai_responses">
+                  OpenAI Responses API（实验性）
+                </MenuItem>
+                <MenuItem value="anthropic_messages">
+                  Anthropic Messages API（实验性）
+                </MenuItem>
+                <MenuItem value="google_v1beta_generate_content">
+                  Google Gemini v1beta generateContent（实验性）
+                </MenuItem>
+              </TextField>
+              <Typography variant="caption" color="text.secondary">
+                说明：当前仅 OpenAI Compatible（chat/completions）为完整支持，其他 API 风格为实验性兼容。
+              </Typography>
+
               {/* Max Tokens */}
               <TextField
                 label="Max Tokens"
@@ -349,6 +394,25 @@ export default function ApiConfigPanel() {
                 disabled={isLoading}
                 inputProps={{ min: 100 }}
                 helperText="支持200k+上下文的模型（如GPT-4、Claude等）"
+              />
+
+              {/* Context Window */}
+              <TextField
+                label="Context Window"
+                size="small"
+                fullWidth
+                type="number"
+                value={formData.contextWindow}
+                onChange={(e) =>
+                  handleFieldChange(
+                    'contextWindow',
+                    parseInt(e.target.value, 10) || 128000,
+                  )
+                }
+                onBlur={() => handleFieldBlur('contextWindow')}
+                disabled={isLoading}
+                inputProps={{ min: 2048 }}
+                helperText="用于估算上下文占用百分比（例如 128000 / 200000）"
               />
 
               {/* Temperature（只读显示） */}

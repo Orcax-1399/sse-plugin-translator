@@ -16,7 +16,8 @@ import TranslationReferencePanel from "../components/TranslationReferencePanel";
 import { showSuccess, showError } from "../stores/notificationStore";
 import CodeMirror from "@uiw/react-codemirror";
 import { EditorView } from "@codemirror/view";
-import { bookDescExtensions, editorFontFamily } from "../utils/customSyntax";
+import { bookDescExtensions } from "../utils/customSyntax";
+import "./EditorWindow.css";
 
 /**
  * 编辑窗口页面
@@ -246,6 +247,7 @@ export default function EditorWindow() {
               onMouseUp={handleTextSelection}
             >
               <CodeMirror
+                className="editor-codemirror editor-codemirror--source"
                 value={record.original_text}
                 editable={false}
                 basicSetup={{
@@ -257,22 +259,6 @@ export default function EditorWindow() {
                 extensions={[
                   ...bookDescExtensions,
                   EditorView.lineWrapping,
-                  EditorView.theme({
-                    "&": {
-                      backgroundColor: "rgba(0, 0, 0, 0.02)",
-                      fontSize: "14px",
-                      fontFamily: editorFontFamily,
-                    },
-                    ".cm-content": {
-                      padding: "16px",
-                      lineHeight: "1.8",
-                      caretColor: "transparent",
-                      overflowWrap: "anywhere",
-                    },
-                    ".cm-line": {
-                      wordBreak: "break-word",
-                    },
-                  }),
                 ]}
               />
             </Box>
@@ -338,6 +324,7 @@ export default function EditorWindow() {
               }}
             >
               <CodeMirror
+                className="editor-codemirror editor-codemirror--target"
                 value={translatedText}
                 onChange={(value) => setTranslatedText(value)}
                 placeholder="请输入译文..."
@@ -350,24 +337,6 @@ export default function EditorWindow() {
                 extensions={[
                   ...bookDescExtensions,
                   EditorView.lineWrapping,
-                  EditorView.theme({
-                    "&": {
-                      backgroundColor: "#ffffff",
-                      fontSize: "14px",
-                      fontFamily: editorFontFamily,
-                    },
-                    ".cm-content": {
-                      padding: "16px",
-                      lineHeight: "1.8",
-                      overflowWrap: "anywhere",
-                    },
-                    ".cm-line": {
-                      wordBreak: "break-word",
-                    },
-                    "&.cm-focused": {
-                      outline: "none",
-                    },
-                  }),
                 ]}
               />
             </Box>

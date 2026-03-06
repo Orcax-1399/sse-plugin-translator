@@ -15,6 +15,10 @@ pub struct ApiConfig {
     pub model_name: String,
     #[serde(rename = "maxTokens")]
     pub max_tokens: i32,
+    #[serde(rename = "apiStyle")]
+    pub api_style: String,
+    #[serde(rename = "contextWindow")]
+    pub context_window: i32,
     #[serde(rename = "isActive")]
     pub is_active: bool,
     #[serde(rename = "createdAt")]
@@ -60,12 +64,32 @@ impl ApiConfigDB {
                 api_key TEXT NOT NULL,
                 model_name TEXT NOT NULL,
                 max_tokens INTEGER NOT NULL,
+                api_style TEXT NOT NULL DEFAULT 'openai_chat_completions',
+                context_window INTEGER NOT NULL DEFAULT 128000,
                 is_active INTEGER NOT NULL DEFAULT 0,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             )",
             [],
         )?;
+
+        // 兼容旧版本：补齐新增字段
+        if let Err(error) = conn.execute(
+            "ALTER TABLE api_configs ADD COLUMN api_style TEXT NOT NULL DEFAULT 'openai_chat_completions'",
+            [],
+        ) {
+            if !error.to_string().contains("duplicate column name") {
+                return Err(error);
+            }
+        }
+        if let Err(error) = conn.execute(
+            "ALTER TABLE api_configs ADD COLUMN context_window INTEGER NOT NULL DEFAULT 128000",
+            [],
+        ) {
+            if !error.to_string().contains("duplicate column name") {
+                return Err(error);
+            }
+        }
 
         // 创建索引以优化查询
         conn.execute(
@@ -80,7 +104,7 @@ impl ApiConfigDB {
     pub fn get_all_configs(&self) -> SqliteResult<Vec<ApiConfig>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, endpoint, api_key, model_name, max_tokens, is_active, created_at, updated_at
+            "SELECT id, name, endpoint, api_key, model_name, max_tokens, api_style, context_window, is_active, created_at, updated_at
              FROM api_configs
              ORDER BY is_active DESC, created_at DESC"
         )?;
@@ -93,9 +117,11 @@ impl ApiConfigDB {
                 api_key: row.get(3)?,
                 model_name: row.get(4)?,
                 max_tokens: row.get(5)?,
-                is_active: row.get::<_, i32>(6)? == 1,
-                created_at: row.get(7)?,
-                updated_at: row.get(8)?,
+                api_style: row.get(6)?,
+                context_window: row.get(7)?,
+                is_active: row.get::<_, i32>(8)? == 1,
+                created_at: row.get(9)?,
+                updated_at: row.get(10)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -112,14 +138,16 @@ impl ApiConfigDB {
             .as_secs() as i64;
 
         conn.execute(
-            "INSERT INTO api_configs (name, endpoint, api_key, model_name, max_tokens, is_active, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?6)",
+            "INSERT INTO api_configs (name, endpoint, api_key, model_name, max_tokens, api_style, context_window, is_active, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?8)",
             params![
                 name,
                 "",  // 默认空端点
                 "",  // 默认空API Key
                 "",  // 默认空模型名称
                 2000,  // 默认Max Tokens
+                "openai_chat_completions",
+                128000,
                 now
             ],
         )?;
@@ -137,14 +165,16 @@ impl ApiConfigDB {
 
         conn.execute(
             "UPDATE api_configs
-             SET name = ?1, endpoint = ?2, api_key = ?3, model_name = ?4, max_tokens = ?5, updated_at = ?6
-             WHERE id = ?7",
+             SET name = ?1, endpoint = ?2, api_key = ?3, model_name = ?4, max_tokens = ?5, api_style = ?6, context_window = ?7, updated_at = ?8
+             WHERE id = ?9",
             params![
                 config.name,
                 config.endpoint,
                 config.api_key,
                 config.model_name,
                 config.max_tokens,
+                config.api_style,
+                config.context_window,
                 now,
                 id
             ],
@@ -189,7 +219,7 @@ impl ApiConfigDB {
     pub fn get_current_config(&self) -> SqliteResult<Option<ApiConfig>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, endpoint, api_key, model_name, max_tokens, is_active, created_at, updated_at
+            "SELECT id, name, endpoint, api_key, model_name, max_tokens, api_style, context_window, is_active, created_at, updated_at
              FROM api_configs
              WHERE is_active = 1
              LIMIT 1"
@@ -203,9 +233,11 @@ impl ApiConfigDB {
                 api_key: row.get(3)?,
                 model_name: row.get(4)?,
                 max_tokens: row.get(5)?,
-                is_active: row.get::<_, i32>(6)? == 1,
-                created_at: row.get(7)?,
-                updated_at: row.get(8)?,
+                api_style: row.get(6)?,
+                context_window: row.get(7)?,
+                is_active: row.get::<_, i32>(8)? == 1,
+                created_at: row.get(9)?,
+                updated_at: row.get(10)?,
             })
         })?;
 

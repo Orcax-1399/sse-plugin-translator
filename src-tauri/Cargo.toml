@@ -1,6 +1,6 @@
 [package]
 name = "sse-plugin-translator"
-version = "0.7.9"
+version = "0.8.0"
 description = "a truri project for sse plugin translation"
 authors = ["orcas_1399"]
 edition = "2021"
