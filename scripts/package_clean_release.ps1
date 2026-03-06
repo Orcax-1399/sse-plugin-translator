@@ -1,5 +1,6 @@
 param(
-    [string]$OutputDir
+    [string]$OutputDir,
+    [switch]$NoZip
 )
 
 $ErrorActionPreference = 'Stop'
@@ -22,6 +23,30 @@ function Get-UniqueOutputDir {
     }
 
     throw "Cannot find available output directory for: $BaseDir"
+}
+
+function Get-UniqueFilePath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$BasePath
+    )
+
+    if (-not (Test-Path -LiteralPath $BasePath)) {
+        return $BasePath
+    }
+
+    $directory = [System.IO.Path]::GetDirectoryName($BasePath)
+    $fileName = [System.IO.Path]::GetFileNameWithoutExtension($BasePath)
+    $extension = [System.IO.Path]::GetExtension($BasePath)
+
+    for ($i = 1; $i -le 99; $i++) {
+        $candidate = Join-Path $directory ('{0}-{1:D2}{2}' -f $fileName, $i, $extension)
+        if (-not (Test-Path -LiteralPath $candidate)) {
+            return $candidate
+        }
+    }
+
+    throw "Cannot find available output file path for: $BasePath"
 }
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -54,6 +79,7 @@ if ([string]::IsNullOrWhiteSpace($OutputDir)) {
 }
 
 $targetUserdata = Join-Path $packageDir 'userdata'
+$zipPath = Get-UniqueFilePath -BasePath ("{0}.zip" -f $packageDir)
 
 New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
 Copy-Item -LiteralPath $sourceExe -Destination $packageDir -Force
@@ -68,6 +94,10 @@ Get-ChildItem -LiteralPath $targetUserdata -Force |
     Where-Object { $_.Name -ne 'translations.db' } |
     Remove-Item -Force -Recurse
 
+if (-not $NoZip) {
+    Compress-Archive -LiteralPath $packageDir -DestinationPath $zipPath -CompressionLevel Optimal
+}
+
 Write-Host ''
 Write-Host 'Package created successfully:'
 Write-Host "  $packageDir"
@@ -75,3 +105,6 @@ Write-Host ''
 Write-Host 'Included files:'
 Write-Host "  $(Join-Path $packageDir 'sse-plugin-translator.exe')"
 Write-Host "  $translationsDb"
+if (-not $NoZip) {
+    Write-Host "  $zipPath"
+}
