@@ -27,4 +27,5 @@ dist-ssr
 CLAUDE.md
 settings.json
 userdata/
+release-output/
 .*/
